@@ -208,14 +208,14 @@ def execute_node(state: GraphState) -> dict[str, Any]:
     returns empty results so answer_node can report the error gracefully.
 
     Implementation:
-        db/executor.py          → execute_sql(sql) -> list[dict]
+        db_executor.py          → execute_sql(sql) -> list[dict]
         graph/highlighter.py    → extract_highlights(rows) -> (nodes, edges)
     """
     if state.get("error"):
         log.warning("[execute_node] skipping — upstream error: %s", state["error"])
         return {"query_result": [], "highlight_nodes": [], "highlight_edges": []}
 
-    from db.executor import execute_sql
+    from db_executor import execute_sql
     from graph.highlighter import extract_highlights
 
     sql = state.get("sql_query") or ""
