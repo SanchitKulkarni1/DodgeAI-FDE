@@ -356,6 +356,7 @@ def answer_node(state: GraphState) -> dict[str, Any]:
     """
     Input  : (all paths) state["resolved_query"], state["intent"],
              state["query_result"], state["semantic_results"],
+             state["query_plan"], state["sql_query"],
              state["error"], state["user_query"]
     Output : state["final_answer"], state["conversation_history"]
 
@@ -367,17 +368,24 @@ def answer_node(state: GraphState) -> dict[str, Any]:
         final_answer = user-friendly explanation + suggestion
 
     Normal path:
-        Calls write_answer() which receives the resolved query + results and
-        returns a grounded, data-backed natural language response.
-        write_answer() is instructed never to include information that is not
-        present in query_result or semantic_results.
+        Calls write_answer() which receives the full reasoning chain:
+          - resolved_query  : what the user actually asked
+          - query_plan      : what the planner decided to retrieve
+          - sql_query       : the exact SQL executed (columns, filters,
+                              aggregations) — critical for grounded answers
+          - query_result    : the actual rows returned by the SQL
+          - semantic_results: fuzzy entity matches (hybrid/semantic paths)
+
+        The SQL is the most important grounding input. Without it,
+        write_answer can't know whether "billing_count" means active-only
+        or all documents, or whether amounts are net or gross.
 
     History update:
         Appends {"role": "user", "content": user_query} and
                 {"role": "assistant", "content": final_answer}
         to conversation_history for the memory_node in the next turn.
 
-    Implementation: llm/answer_writer.py → write_answer(query, results, semantic) -> str
+    Implementation: llm/answer_writer.py → write_answer(...)
     """
     from llm.answer_writer import write_answer
 
@@ -386,6 +394,8 @@ def answer_node(state: GraphState) -> dict[str, Any]:
     resolved_query   = state.get("resolved_query") or user_query
     query_result     = state.get("query_result")     or []
     semantic_results = state.get("semantic_results") or []
+    query_plan       = state.get("query_plan")        # None on semantic path
+    sql_query        = state.get("sql_query")         # None on semantic path
     error            = state.get("error")
     history          = list(state.get("conversation_history") or [])
 
@@ -419,10 +429,14 @@ def answer_node(state: GraphState) -> dict[str, Any]:
         }
 
     # ── normal path ─────────────────────────────────────────────────────────
+    # Pass the full reasoning chain so write_answer can produce a grounded,
+    # semantically accurate answer — not just a raw data dump.
     final_answer = write_answer(
         query=resolved_query,
         sql_results=query_result,
         semantic_results=semantic_results,
+        query_plan=query_plan,     # ← what was planned
+        sql_query=sql_query,       # ← what was actually executed
     )
 
     # ── update conversation memory ──────────────────────────────────────────
