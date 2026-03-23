@@ -54,7 +54,7 @@ def resolve_query(user_query: str, conversation_history: list[dict]) -> str:
             config=types.GenerateContentConfig(
                 system_instruction=_SYSTEM,
                 temperature=0.0,       # deterministic rewriting
-                max_output_tokens=256, # rewritten queries are short
+                max_output_tokens=1000, # rewritten queries are short
             ),
         )
         resolved = response.text.strip()

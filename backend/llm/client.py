@@ -1,11 +1,16 @@
 
 import os
 import logging
+from pathlib import Path
+from dotenv import load_dotenv
 import google.genai as genai
 from google.genai import types  
 
+# Load environment variables from .env file
+load_dotenv(Path(__file__).parent.parent / ".env")
+
 log = logging.getLogger(__name__)
-MODEL= "google-flash-latest"
+MODEL= "gemini-flash-latest"
 
 api_key = os.getenv("GEMINI_API_KEY")
 if not api_key:

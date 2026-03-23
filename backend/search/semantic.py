@@ -544,3 +544,63 @@ def nodes_from_semantic_results(results: list[dict]) -> list[dict]:
                 "label": r["label"],
             }
     return list(seen.values())
+
+
+# ---------------------------------------------------------------------------
+# SemanticIndex wrapper class
+# ---------------------------------------------------------------------------
+
+class SemanticIndex:
+    """
+    Stateful wrapper for ChromaDB semantic search functionality.
+    Initialize once at app startup (in lifespan) and reuse across requests.
+    """
+
+    def __init__(self):
+        """Initialize the semantic index, loading persisted ChromaDB."""
+        self._client, self._collection = _get_client_and_collection()
+        log.info("[SemanticIndex] initialized — collection '%s' ready", _COLLECTION)
+
+    def search(
+        self,
+        query: str,
+        top_k: int = 10,
+        entity_type: str | None = None,
+        customer_id: str | None = None,
+        where: dict | None = None,
+    ) -> list[dict]:
+        """
+        Wrapper around semantic_search().
+
+        Args:
+            query: Natural language search string.
+            top_k: Max results to return.
+            entity_type: Pre-filter to one entity type.
+            customer_id: Scope search to a specific customer's documents.
+            where: Raw ChromaDB where filter.
+
+        Returns:
+            List of dicts sorted by similarity score (descending).
+        """
+        return semantic_search(
+            query=query,
+            top_k=top_k,
+            entity_type=entity_type,
+            customer_id=customer_id,
+            where=where,
+        )
+
+    def build_or_rebuild_index(self) -> None:
+        """
+        Rebuild the entire ChromaDB vector index from SQLite.
+        Call this if you've ingested new data and need to refresh.
+        """
+        build_index()
+        self._client, self._collection = _get_client_and_collection()
+        log.info("[SemanticIndex] index rebuilt — collection count: %d", self._collection.count())
+
+    def get_collection_count(self) -> int:
+        """Return the current document count in the ChromaDB collection."""
+        if self._collection:
+            return self._collection.count()
+        return 0

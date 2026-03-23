@@ -104,7 +104,7 @@ def classify_intent(query: str) -> tuple[str, str]:
             config=types.GenerateContentConfig(
                 system_instruction=_SYSTEM,
                 temperature=0.0,
-                max_output_tokens=128,
+                max_output_tokens=1000,
                 response_mime_type="application/json",
                 response_schema=ClassificationResponse
             ),

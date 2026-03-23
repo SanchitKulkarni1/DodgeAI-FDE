@@ -22,7 +22,7 @@ Implementation modules (to be created):
 import logging
 from typing import Any
 
-from state import GraphState
+from .state import GraphState
 
 log = logging.getLogger(__name__)
 
@@ -216,7 +216,7 @@ def execute_node(state: GraphState) -> dict[str, Any]:
         return {"query_result": [], "highlight_nodes": [], "highlight_edges": []}
 
     from db_executor import execute_sql
-    from graph.highlighter import extract_highlights
+    from graph_highlighter import extract_highlights
 
     sql = state.get("sql_query") or ""
 
@@ -267,7 +267,7 @@ def semantic_node(state: GraphState) -> dict[str, Any]:
     Implementation: search/semantic.py → semantic_search(query, top_k) -> list[dict]
     """
     from search.semantic import semantic_search
-    from graph.highlighter import nodes_from_semantic_results
+    from graph_highlighter import nodes_from_semantic_results
 
     resolved_query = state.get("resolved_query") or state["user_query"]
 
@@ -308,7 +308,7 @@ def hybrid_node(state: GraphState) -> dict[str, Any]:
         }
     """
     from search.hybrid import hybrid_search
-    from graph.highlighter import extract_highlights
+    from graph_highlighter import extract_highlights
 
     resolved_query = state.get("resolved_query") or state["user_query"]
 

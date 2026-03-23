@@ -52,7 +52,7 @@ def build_query_plan(query: str) -> str:
             config=types.GenerateContentConfig(
                 system_instruction=_SYSTEM,
                 temperature=0.0,
-                max_output_tokens=512,
+                max_output_tokens=2000,
             ),
         )
         plan = response.text.strip()

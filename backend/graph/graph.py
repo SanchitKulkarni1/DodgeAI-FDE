@@ -23,8 +23,8 @@ Graph topology:
 
 from langgraph.graph import StateGraph, END
 
-from state import GraphState
-from nodes import (
+from .state import GraphState
+from .nodes import (
     memory_node,
     classify_node,
     route_node,
@@ -112,4 +112,4 @@ def build_graph() -> StateGraph:
     # ── exit ────────────────────────────────────────────────────────────────
     g.add_edge("answer_node", END)
 
-    return g
+    return g.compile()

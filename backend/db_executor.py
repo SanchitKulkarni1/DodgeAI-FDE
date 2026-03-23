@@ -69,3 +69,68 @@ def execute_sql(sql: str) -> list[dict]:
 
     finally:
         con.close()
+
+
+# ---------------------------------------------------------------------------
+# Executor class — stateful wrapper for connection lifecycle
+# ---------------------------------------------------------------------------
+
+class DBExecutor:
+    """Wrapper for read-only database connection with lifecycle management."""
+
+    def __init__(self):
+        self.con = None
+        self._connect()
+
+    def _connect(self):
+        """Open read-only connection to SQLite database."""
+        uri = f"file:{_DB_PATH.resolve()}?mode=ro"
+        self.con = sqlite3.connect(uri, uri=True, timeout=_TIMEOUT)
+        self.con.row_factory = sqlite3.Row
+        log.info("[DBExecutor] connected to %s", _DB_PATH)
+
+    def execute(self, sql: str) -> list[dict]:
+        """Execute a SELECT statement (with safety checks)."""
+        if not self.con:
+            self._connect()
+
+        sql = sql.strip()
+
+        # Safety check — reject any non-read statement
+        first_word = sql.split()[0].upper() if sql else ""
+        if first_word not in ("SELECT", "WITH"):
+            raise ValueError(f"Only SELECT statements are allowed. Got: {first_word!r}")
+
+        # Wrap in LIMIT if one isn't already present
+        if not re.search(r"\bLIMIT\b", sql, re.IGNORECASE):
+            sql = f"SELECT * FROM ({sql}) _q LIMIT {_ROW_LIMIT}"
+            log.debug("[executor] LIMIT %d injected", _ROW_LIMIT)
+
+        try:
+            cursor = self.con.execute(sql)
+            rows = cursor.fetchmany(_ROW_LIMIT)
+            result = [dict(row) for row in rows]
+            log.info("[executor] %d rows returned", len(result))
+            return result
+        except sqlite3.OperationalError as e:
+            log.error("[executor] OperationalError: %s | sql=%r", e, sql[:200])
+            raise
+
+    def close(self):
+        """Close the database connection."""
+        if self.con:
+            self.con.close()
+            self.con = None
+            log.info("[DBExecutor] connection closed")
+
+    def __del__(self):
+        """Ensure connection is closed on garbage collection."""
+        self.close()
+
+
+def get_executor() -> DBExecutor:
+    """
+    Factory function — returns a new DBExecutor instance.
+    Call this at application startup to get a reusable database connection.
+    """
+    return DBExecutor()

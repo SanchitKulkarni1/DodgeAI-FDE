@@ -163,7 +163,7 @@ def write_answer(
             config=types.GenerateContentConfig(
                 system_instruction=_SYSTEM,
                 temperature=0.3,
-                max_output_tokens=1024,
+                max_output_tokens=3000,
             ),
         )
         answer = response.text.strip()
