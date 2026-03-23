@@ -1,0 +1,24 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body, #root {
+    @apply h-full w-full m-0 p-0 overflow-hidden bg-canvas text-gray-200 antialiased;
+  }
+}
+
+/* Custom scrollbar for Chat panel */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  @apply bg-transparent;
+}
+::-webkit-scrollbar-thumb {
+  @apply bg-gray-700 rounded-full;
+}
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-gray-600;
+}
