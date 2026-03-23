@@ -9,6 +9,7 @@ reasoning chain that produced the data:
   - The SQL query   (exactly what was executed — anchors column meaning)
   - SQL result rows (the actual data returned)
   - Semantic search results (entity matches from vector search)
+  - SQL failure signal (prevents fabrication when SQL errored)
 
 Why query_plan + sql_query matter for grounding
 ------------------------------------------------
@@ -42,6 +43,7 @@ You will receive:
      filters, joins, and aggregations were applied to produce the results)
   4. The actual data returned by that query
   5. Any semantic search results (fuzzy entity matches)
+  6. A SQL_FAILED flag indicating whether the data query encountered an error
 
 Your job: write a clear, concise natural language answer grounded entirely
 in the provided data and reasoning chain.
@@ -72,6 +74,14 @@ Rules (strictly enforced):
      Speak in business language: "sales orders", "billing documents",
      "deliveries", "customers", "products" — not "rows", "records", or
      technical identifiers like "billing_doc_is_cancelled".
+ 13. If SQL_FAILED is True, you MUST NOT produce any numerical figures
+     (amounts, counts, totals, sums, averages). Instead, state that the
+     system identified relevant entities but could not compute the exact
+     figure. List any entities found via semantic search and suggest the
+     user try a more specific query.
+ 14. NEVER sum, average, or derive numbers from semantic search metadata
+     (e.g., total_amount on entity records). These are per-entity snapshots,
+     NOT aggregated results. Only use numbers from SQL query results.
 """
 
 
@@ -81,6 +91,8 @@ def write_answer(
     semantic_results: list[dict],
     query_plan: str | None = None,
     sql_query: str | None = None,
+    sql_failed: bool = False,
+    sql_error: str | None = None,
 ) -> str:
     """
     Write a grounded natural language answer from the full reasoning chain.
@@ -96,6 +108,9 @@ def write_answer(
                           for semantic-only paths). This is the most important
                           grounding context — it tells the LLM exactly what
                           filters and aggregations produced the result rows.
+        sql_failed:       True if the SQL query encountered an error (FIX #9).
+                          Tells the LLM not to fabricate figures.
+        sql_error:        The error message from SQL execution (FIX #9).
 
     Returns:
         A natural language answer string grounded in the provided data.
@@ -112,6 +127,16 @@ def write_answer(
     if sql_query:
         reasoning_parts.append(
             f"SQL EXECUTED (exact filters and aggregations applied):\n{sql_query}"
+        )
+
+    # SQL failure signal (FIX #9)
+    if sql_failed:
+        error_detail = f" Error: {sql_error}" if sql_error else ""
+        reasoning_parts.append(
+            f"SQL_FAILED: True — The data query encountered an error and "
+            f"returned NO computed results.{error_detail}\n"
+            f"DO NOT produce any numerical figures. Only describe the "
+            f"entities found via semantic search."
         )
 
     reasoning_section = (

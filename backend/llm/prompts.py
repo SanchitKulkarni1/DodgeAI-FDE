@@ -1,18 +1,71 @@
 """
 llm/prompts.py — Single source of truth for the DB schema context.
 
-Imported by planner.py and sql_generator.py so the schema description
-is never duplicated or out of sync.
+FIX #5: Added DATA_CONSTRAINTS block describing the actual date coverage,
+known data quality issues, and financial ranges. This is injected into the
+planner, sql_generator, and answer_writer system prompts so the LLM never
+generates SQL filters for 2024 / Q4 which return 0 rows.
+"""
+
+# ---------------------------------------------------------------------------
+# FIX #5 — Dataset constraints block.
+# Injected into every LLM system prompt that touches SQL or dates.
+# ---------------------------------------------------------------------------
+
+DATA_CONSTRAINTS = """
+========== DATASET CONSTRAINTS — READ BEFORE GENERATING ANY SQL ==========
+
+DATE COVERAGE (HARD LIMITS — no data exists outside these ranges):
+  sales_order_headers.creation_date          : 2025-03-31 to 2025-04-02
+  outbound_delivery_headers.creation_date    : 2025-03-31 to 2025-04-07
+  outbound_delivery_headers.actual_goods_movement_date : 2025-04-02 to 2025-04-29
+  billing_document_headers.billing_document_date : ONLY 3 DATES EXIST:
+      2025-04-02 (90% of records), 2025-04-30, 2025-05-16
+  payments_ar.posting_date                   : 2025-04-02 to 2025-05-16
+  payments_ar.clearing_date                  : 2025-04-02 to 2025-05-16
+  journal_entry_items_ar.posting_date        : 2025-04-02 to 2025-05-16
+
+RESPONSE RULE FOR OUT-OF-RANGE DATE QUERIES:
+  If the user asks about 2024, Q4, Q1 before April, or any period outside
+  March–May 2025, DO NOT generate a date filter that returns 0 rows.
+  Instead produce an answer that says:
+    "This dataset covers March–May 2025 only. No records exist for [period].
+     Shall I run this for the available date range (April–May 2025)?"
+
+BUSINESS SCOPE:
+  - Currency       : INR only (all amounts are in Indian Rupees)
+  - Fiscal year    : 2025 only
+  - Company code   : ABCD
+  - Sales org      : ABCD
+  - Customers      : exactly 8 business partners
+  - Products       : 69 SKUs — fragrances, body sprays, deodorants (ZFG1001 group)
+  - Plants         : 44 plants
+
+KEY DATA QUALITY FACTS:
+  - 80 of 163 billing documents are CANCELLED (billing_doc_is_cancelled = 1).
+    ALWAYS filter: WHERE billing_doc_is_cancelled = 0 for any revenue query.
+  - 14 sales orders have no delivery (overall_delivery_status = 'A').
+    These are the "broken flow" orders — valid for gap queries.
+  - 3 deliveries have no billing document — valid incomplete-flow data.
+  - overall_billing_status is NULL/empty for ALL orders — NEVER use this column
+    to determine billing status. Use a JOIN to billing_document_headers instead.
+  - payments_ar.invoice_reference is NULL for all rows — NOT a valid join key.
+  - payments_ar.sales_document is NULL for all rows — NOT a valid join key.
+  - Payments may include negative amounts (reversals/credits). Use ABS() or
+    add a filter WHERE amount_in_transaction_currency > 0 when computing totals.
+
+FINANCIAL RANGES (for sanity-checking SQL results):
+  - sales_order totalNetAmount    : INR 119 to INR 19,021 per order
+  - active billing doc amounts    : INR 152 to INR 2,034 per document
+  - payment amounts               : -7,199 to +7,199 INR (negatives are reversals)
+  - total active billing revenue  : ~INR 30,000 across all 83 active docs
 """
 
 # ---------------------------------------------------------------------------
 # Complete schema description with all join paths.
-# Written specifically to guide SQL generation — not auto-generated DDL.
-# Every non-obvious join is spelled out explicitly because the LLM must
-# know them without guessing.
 # ---------------------------------------------------------------------------
 
-DB_SCHEMA = """
+DB_SCHEMA = DATA_CONSTRAINTS + """
 DATABASE: SQLite  (o2c.db)
 ALL amounts are REAL. ALL dates are TEXT in 'YYYY-MM-DD' format.
 Booleans are stored as INTEGER: 1 = true, 0 = false.
@@ -29,7 +82,7 @@ TABLE: sales_order_headers
   total_net_amount       REAL
   transaction_currency   TEXT  (always 'INR' in this dataset)
   overall_delivery_status TEXT ('C' = fully delivered, 'A' = not yet delivered)
-  overall_billing_status  TEXT (often NULL — do not rely on it)
+  overall_billing_status  TEXT (ALWAYS NULL — do not use this column)
   requested_delivery_date TEXT
   customer_payment_terms  TEXT
   header_billing_block    TEXT (NULL = not blocked)
@@ -128,8 +181,8 @@ TABLE: payments_ar
   amount_in_transaction_currency REAL
   amount_in_company_code_currency REAL
   posting_date               TEXT
-  invoice_reference          TEXT  (NULL in this dataset — do NOT use as join key)
-  sales_document             TEXT  (NULL in this dataset — do NOT use as join key)
+  invoice_reference          TEXT  (NULL in this dataset — DO NOT use as join key)
+  sales_document             TEXT  (NULL in this dataset — DO NOT use as join key)
   PRIMARY KEY (company_code, fiscal_year, accounting_document, accounting_document_item)
 
 ========== SUPPORTING ENTITIES ==========

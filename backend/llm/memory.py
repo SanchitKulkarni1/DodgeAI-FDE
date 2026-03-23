@@ -1,7 +1,16 @@
 import logging
+import re
 from llm.client import gemini, MODEL, types
 
 log = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Pronouns that signal a follow-up needing LLM resolution
+# ---------------------------------------------------------------------------
+_PRONOUN_RE = re.compile(
+    r"\b(it|its|they|them|their|that|those|this|these|the same|the above|the one)\b",
+    re.IGNORECASE,
+)
 
 # ---------------------------------------------------------------------------
 # System prompt — tells the model EXACTLY what to produce
@@ -32,11 +41,21 @@ Examples:
 
 
 def resolve_query(user_query: str, conversation_history: list[dict]) -> str:
+    # ── Fast-path: skip LLM call when there is nothing to resolve ──────────
+    # Two conditions must BOTH be true to skip:
+    #   1. No conversation history (nothing to resolve pronouns against)
+    #   2. No pronouns / implicit references in the query
+    # Saves ~2s per fresh query — the most common case.
     if not conversation_history:
-        log.debug("[memory] no history — returning query unchanged")
+        log.debug("[memory] no history — fast-path, returning query unchanged")
         return user_query
-    
-    recent = conversation_history[-6:] #keeping last 6 to save tokens
+
+    if not _PRONOUN_RE.search(user_query):
+        log.debug("[memory] no pronouns detected — fast-path, returning query unchanged")
+        return user_query
+
+    # ── Slow-path: LLM rewrite needed ──────────────────────────────────────
+    recent = conversation_history[-6:]  # keep last 6 turns to save tokens
     history_text = "\n".join(
         f"{turn['role'].upper()}: {turn['content']}" for turn in recent
     )
@@ -53,7 +72,7 @@ def resolve_query(user_query: str, conversation_history: list[dict]) -> str:
             contents=prompt,
             config=types.GenerateContentConfig(
                 system_instruction=_SYSTEM,
-                temperature=0.0,       # deterministic rewriting
+                temperature=0.0,        # deterministic rewriting
                 max_output_tokens=1000, # rewritten queries are short
             ),
         )

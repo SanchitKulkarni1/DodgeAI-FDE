@@ -172,6 +172,9 @@ def build_index() -> None:
         ids.clear(); documents.clear(); metadatas.clear()
 
     # ── 1. Products ──────────────────────────────────────────────────────────
+    # FIX #10: Import category inference to enrich product embeddings
+    from search.taxonomy import infer_category
+
     rows = con.execute("""
         SELECT p.product, pd.product_description, p.product_old_id,
                p.product_group, p.product_type, p.division,
@@ -182,20 +185,28 @@ def build_index() -> None:
     """).fetchall()
 
     for product, desc, old_id, group, ptype, division, sector, unit, gw, nw in rows:
-        text = " ".join(filter(None, [desc, old_id, group, product]))
+        # FIX #10: Enrich embedding text with inferred category for better
+        # semantic matching on queries like "skincare products"
+        category = infer_category(desc) if desc else None
+        text_parts = [desc, old_id, group, product]
+        if category:
+            text_parts.append(category)  # e.g. "skincare", "haircare"
+        text = " ".join(filter(None, text_parts))
+
         ids.append(f"product_{product}")
         documents.append(text)
         metadatas.append({
-            "type":            "product",
-            "entity_id":       _s(product),
-            "label":           _s(desc or old_id or product),
-            "product_group":   _s(group),
-            "product_type":    _s(ptype),
-            "division":        _s(division),
-            "industry_sector": _s(sector),
-            "base_unit":       _s(unit),
-            "gross_weight":    _f(gw),
-            "net_weight":      _f(nw),
+            "type":             "product",
+            "entity_id":        _s(product),
+            "label":            _s(desc or old_id or product),
+            "product_group":    _s(group),
+            "product_type":     _s(ptype),
+            "product_category": _s(category or ""),  # FIX #10: category metadata
+            "division":         _s(division),
+            "industry_sector":  _s(sector),
+            "base_unit":        _s(unit),
+            "gross_weight":     _f(gw),
+            "net_weight":       _f(nw),
         })
     _flush()
 
