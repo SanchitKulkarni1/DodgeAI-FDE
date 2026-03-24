@@ -9,9 +9,15 @@ FIX #3: Added _is_id_column() guard that rejects aggregate/metric columns
 contains a substring that looks like an entity type. Without this, columns
 like "total_revenue" or "billing_count" were being treated as entity IDs
 and producing junk nodes in the graph.
+
+FIX #4: Resolve customer display names back to business_partner IDs for
+stable graph node identification. Customer nodes use display names by default,
+but edges need stable IDs for frontend metadata lookups.
 """
 
 import logging
+import sqlite3
+from pathlib import Path
 
 log = logging.getLogger(__name__)
 
@@ -102,6 +108,57 @@ def _infer_type(col_name: str) -> tuple[str, str] | None:
     return None
 
 
+def _resolve_customer_ids(display_names: set[str]) -> dict[str, str]:
+    """
+    Resolve customer display names to business_partner IDs via database lookup.
+    
+    FIX #4: For edges in aggregation queries (e.g., revenue by customer),
+    edges should connect stable business_partner IDs, not display names.
+    This function batch-lookups IDs from the database.
+    
+    Args:
+        display_names: Set of customer display names to resolve
+        
+    Returns:
+        dict[display_name] → business_partner_id, or empty dict on error
+    """
+    if not display_names:
+        return {}
+    
+    try:
+        # Database is at backend/o2c.db (relative to current working directory)
+        db_path = Path("o2c.db")
+        if not db_path.exists():
+            log.warning("[highlighter] o2c.db not found at %s", db_path.absolute())
+            return {}
+        
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        # Build parameterized query for all display names
+        placeholders = ",".join("?" * len(display_names))
+        query = f"""
+            SELECT customer, business_partner_full_name 
+            FROM business_partners 
+            WHERE business_partner_full_name IN ({placeholders})
+        """
+        
+        cursor.execute(query, list(display_names))
+        rows = cursor.fetchall()
+        conn.close()
+        
+        # Build lookup dict: display_name → customer_id
+        lookup = {row["business_partner_full_name"]: str(row["customer"]) for row in rows}
+        
+        log.debug("[highlighter] resolved %d customer names to IDs", len(lookup))
+        return lookup
+        
+    except Exception as e:
+        log.warning("[highlighter] failed to resolve customer IDs: %s", e)
+        return {}
+
+
 def extract_highlights(
     rows: list[dict],
 ) -> tuple[list[dict], list[dict]]:
@@ -110,6 +167,10 @@ def extract_highlights(
 
     Enhanced to handle aggregation queries: creates metric nodes for
     revenue/counts and connects them to entity nodes.
+    
+    FIX #4: Resolves customer display names to stable business_partner IDs
+    for edge source/target and node ID fields. Display names are preserved
+    in node labels for frontend rendering.
 
     Args:
         rows: List of dicts from execute_sql() — each dict is one result row.
@@ -127,6 +188,8 @@ def extract_highlights(
     
     # Track entities per row for metric linking
     entity_nodes_per_row: list[list[dict]] = []
+    # Track customer display names for batch ID resolution
+    customer_display_names: set[str] = set()
 
     for row in rows:
         row_nodes: list[dict] = []
@@ -167,6 +230,10 @@ def extract_highlights(
                     "label": f"{label_prefix} {entity_id}",
                 }
                 seen_nodes[node_key] = node
+                
+                # Track customer display names for ID resolution
+                if entity_type == "customer" and col == "business_partner_full_name":
+                    customer_display_names.add(entity_id)
 
             row_nodes.append(seen_nodes[node_key])
         
@@ -251,6 +318,26 @@ def extract_highlights(
                     })
 
     highlight_nodes = list(seen_nodes.values())
+    
+    # FIX #4: Resolve customer display names to business_partner IDs
+    if customer_display_names:
+        name_to_id_map = _resolve_customer_ids(customer_display_names)
+        
+        # Update nodes: replace display names with business_partner IDs in node.id
+        for node in highlight_nodes:
+            if node["type"] == "customer" and node["id"] in name_to_id_map:
+                old_id = node["id"]
+                new_id = name_to_id_map[old_id]
+                # Keep display name in label for frontend rendering
+                node["id"] = new_id
+                log.debug("[highlighter] resolved customer %r → ID %r", old_id, new_id)
+                
+                # Update edges that reference this old_id
+                for edge in highlight_edges:
+                    if edge["source"] == old_id and edge["source_type"] == "customer":
+                        edge["source"] = new_id
+                    if edge["target"] == old_id and edge["target_type"] == "customer":
+                        edge["target"] = new_id
 
     log.info(
         "[highlighter] %d nodes, %d edges extracted from %d rows",
