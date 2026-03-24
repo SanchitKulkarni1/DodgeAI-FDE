@@ -213,3 +213,8 @@ backend/sap-order-to-cash-dataset
 #DB
 backend/o2c.db
 backend/chroma_store
+
+
+# extra files
+backend/ARCHITECTURAL_ANALYSIS.md
+backend/solutions
