@@ -28,6 +28,7 @@ _EXACT_COL_MAP: dict[str, tuple[str, str]] = {
     "customer":                       ("customer",         "Customer"),
     "sold_to_party":                  ("customer",         "Customer"),
     "business_partner":               ("customer",         "Customer"),
+    "business_partner_full_name":     ("customer",         "Customer"),
     "material":                       ("product",          "Product"),
     "product":                        ("product",          "Product"),
     "plant":                          ("plant",            "Plant"),
@@ -41,6 +42,7 @@ _SUFFIX_PATTERNS: list[tuple[str, str, str]] = [
     ("accounting_doc",    "journal_entry",    "Journal Entry"),
     ("payment_doc",       "payment",          "Payment"),
     ("material",          "product",          "Product"),
+    ("full_name",         "customer",         "Customer"),  # For *_full_name columns
 ]
 
 # ---------------------------------------------------------------------------
@@ -106,6 +108,9 @@ def extract_highlights(
     """
     Extract highlight_nodes and highlight_edges from SQL result rows.
 
+    Enhanced to handle aggregation queries: creates metric nodes for
+    revenue/counts and connects them to entity nodes.
+
     Args:
         rows: List of dicts from execute_sql() — each dict is one result row.
 
@@ -119,10 +124,15 @@ def extract_highlights(
     seen_nodes: dict[tuple[str, str], dict] = {}
     seen_edges: set[tuple[str, str, str, str]] = set()
     highlight_edges: list[dict] = []
+    
+    # Track entities per row for metric linking
+    entity_nodes_per_row: list[list[dict]] = []
 
     for row in rows:
         row_nodes: list[dict] = []
-
+        metric_nodes: list[dict] = []
+        
+        # First pass: extract entity nodes
         for col, val in row.items():
             if val is None or val == "":
                 continue
@@ -159,22 +169,78 @@ def extract_highlights(
                 seen_nodes[node_key] = node
 
             row_nodes.append(seen_nodes[node_key])
+        
+        # Second pass: extract metric nodes (for aggregation queries)
+        for col, val in row.items():
+            if val is None or val == "":
+                continue
+                
+            # Check if this is a metric column (contains metric tokens)
+            tokens = set(col.lower().split("_"))
+            if not tokens.intersection(_METRIC_TOKENS):
+                continue
+                
+            # It's a metric — create a metric node for it
+            try:
+                metric_val = float(val) if not isinstance(val, (int, float)) else val
+            except (ValueError, TypeError):
+                continue
+            
+            # Format label based on metric type
+            if "revenue" in col.lower():
+                metric_label = f"Revenue: INR {metric_val:,.2f}"
+                metric_type = "revenue"
+            elif "amount" in col.lower():
+                metric_label = f"Amount: INR {metric_val:,.2f}"
+                metric_type = "amount"
+            elif "count" in col.lower() or "qty" in col.lower():
+                metric_label = f"{col}: {int(metric_val)}"
+                metric_type = "count"
+            else:
+                metric_label = f"{col}: {metric_val:,.2f}"
+                metric_type = "metric"
+            
+            # Create unique metric node
+            metric_id = f"{col}_{metric_val}"
+            node_key = (metric_id, metric_type)
+            if node_key not in seen_nodes:
+                node = {
+                    "id":    metric_id,
+                    "type":  metric_type,
+                    "label": metric_label,
+                    "value": metric_val,
+                }
+                seen_nodes[node_key] = node
+            
+            metric_nodes.append(seen_nodes[node_key])
+        
+        entity_nodes_per_row.append(row_nodes + metric_nodes)
 
-        # Derive edges between nodes that appear in the same row
-        for i, src_node in enumerate(row_nodes):
-            for tgt_node in row_nodes[i + 1:]:
+        # Derive edges: entities ↔ metrics in same row
+        for i, src_node in enumerate(entity_nodes_per_row[-1]):
+            for tgt_node in entity_nodes_per_row[-1][i + 1:]:
                 src_type = src_node["type"]
                 tgt_type = tgt_node["type"]
 
-                if (src_type, tgt_type) in _VALID_EDGE_PAIRS:
-                    edge_key = (src_node["id"], tgt_node["id"], src_type, tgt_type)
-                elif (tgt_type, src_type) in _VALID_EDGE_PAIRS:
+                # Check if this is a valid O2C edge or entity→metric connection
+                is_valid_o2c = (src_type, tgt_type) in _VALID_EDGE_PAIRS or \
+                               (tgt_type, src_type) in _VALID_EDGE_PAIRS
+                
+                is_entity_to_metric = src_type in ("customer", "product", "plant") and \
+                                     tgt_type in ("revenue", "amount", "count", "metric")
+                is_metric_to_entity = tgt_type in ("customer", "product", "plant") and \
+                                     src_type in ("revenue", "amount", "count", "metric")
+                
+                if not (is_valid_o2c or is_entity_to_metric or is_metric_to_entity):
+                    continue
+                
+                # Orient: entities source, metrics target
+                if is_metric_to_entity:
                     src_node, tgt_node = tgt_node, src_node
                     src_type, tgt_type = tgt_type, src_type
-                    edge_key = (src_node["id"], tgt_node["id"], src_type, tgt_type)
-                else:
-                    continue
-
+                
+                edge_key = (src_node["id"], tgt_node["id"], src_type, tgt_type)
+                
                 if edge_key not in seen_edges:
                     seen_edges.add(edge_key)
                     highlight_edges.append({
