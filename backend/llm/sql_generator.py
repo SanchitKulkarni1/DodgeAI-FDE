@@ -17,9 +17,11 @@ Key prompt constraints enforced:
 import logging
 import re
 import sqlite3
+import json
 from llm.client import gemini, MODEL, types
 from llm.prompts import DB_SCHEMA
 from db.schema_validator import validate_sql_against_schema, report_sql_issues
+from llm.query_plan import QueryPlan
 
 log = logging.getLogger(__name__)
 
@@ -29,38 +31,31 @@ _DB_PATH = "o2c.db"
 _SYSTEM = f"""\
 You are a SQLite SQL generator for an Order-to-Cash (O2C) database.
 
-Given a natural language question and a query plan, produce ONE valid SQLite
+Given a natural language question and a STRUCTURED QUERY PLAN (JSON), produce ONE valid SQLite
 SELECT statement that answers the question.
+
+The query plan specifies:
+  - intent: aggregation, exploration, trace, or comparison
+  - tables: list of tables needed
+  - joins: list of JOIN conditions (exact strings from schema)
+  - filters: list of WHERE conditions (field, operator, value)
+  - aggregation: aggregation function if intent is aggregation
+  - group_by: columns to GROUP BY
+  - order_by: ORDER BY clause
+  - limit: LIMIT value
+  - reasoning: explanation of the plan
 
 CRITICAL RULES (strictly enforced by validator):
   1. Output ONLY the SQL statement — no explanation, no markdown fences.
   2. Only use SELECT statements. Never INSERT, UPDATE, DELETE, DROP, or ALTER.
-  3. Always add LIMIT 200 unless the query is an aggregation returning a single row.
+  3. Always add LIMIT (default 200 unless overridden)
   4. Use only the exact table names and column names from the schema.
-  5. Follow the CRITICAL JOIN PATHS exactly — do not invent join conditions.
+  5. For joins, use EXACT strings from the query plan JSON.
+  6. Apply all filters from the query plan.
+  7. If aggregation is specified, use it in SELECT and include GROUP BY.
 
-MANDATORY JOIN PATHS (memorise these):
-  - Sales Order → Delivery: outbound_delivery_items.reference_sd_document = sales_order_headers.sales_order
-  - Delivery → Billing: billing_document_items.reference_sd_document = outbound_delivery_headers.delivery_document
-  - Billing → Payment: payments_ar.clearing_accounting_document = billing_document_headers.accounting_document
-     (DO NOT use invoice_reference or sales_document — they are NULL in all rows)
-  - Billing → Journal: journal_entry_items_ar.accounting_document = billing_document_headers.accounting_document
-  - Billing Item → Product: billing_document_items.material = products.product
-  - Product → Description: products.product = product_descriptions.product AND product_descriptions.language = 'EN'
-  - Billing → Customer: billing_document_headers.sold_to_party = business_partners.customer
-
-FILTERS TO ALWAYS APPLY:
-  - For "active" (non-cancelled) billing docs: WHERE billing_doc_is_cancelled = 0
-  - For cash flow: Include payments_ar JOIN to show payment status
-  - When filtering by customer: Use business_partners table
-
-COLUMNS TO NEVER USE (always NULL in this dataset):
-  - sales_order_headers.overall_billing_status
-  - payments_ar.invoice_reference
-  - payments_ar.sales_document
-
-USE LEFT JOIN when you need to show rows that may have no match (e.g. orders
-without deliveries). Use INNER JOIN when both sides must exist.
+DON'T OVERTHINK: The query plan already has done the hard work (tables, joins, filters).
+Your job is just to convert it to valid SQL.
 
 {DB_SCHEMA}
 """
@@ -72,7 +67,17 @@ def _extract_sql(text: str) -> str:
     # Remove ```sql ... ``` or ``` ... ```
     text = re.sub(r"^```(?:sql)?\s*\n?", "", text, flags=re.IGNORECASE)
     text = re.sub(r"\n?```\s*$", "", text)
-    return text.strip()
+    sql = text.strip()
+    
+    # Detect truncation — SQL ending mid-keyword (incomplete clause)
+    if sql and len(sql) > 50:
+        # If query ends with incomplete clause indicators
+        ends_with = sql.rstrip()[-3:].upper()
+        if any(sql.rstrip().endswith(c) for c in ('=', ' AND', ' OR', ' ON', ' WHERE', ' b')):
+            # Likely truncated (ends with single letter or incomplete clause)
+            raise ValueError(f"Truncated SQL detected: query ends incomplete at: ...{sql[-30:]}")
+    
+    return sql
 
 
 def _validate_sql(sql: str) -> None:
@@ -110,13 +115,13 @@ def _validate_sql(sql: str) -> None:
         con.close()
 
 
-def generate_sql(query: str, query_plan: str) -> str:
+def generate_sql(query: str, query_plan: QueryPlan) -> str:
     """
     Generate and validate a SQLite SELECT statement.
 
     Args:
-        query:      The resolved natural language query.
-        query_plan: The plain-English plan from build_query_plan().
+        query:       The resolved natural language query.
+        query_plan:  QueryPlan (Pydantic) from build_query_plan().
 
     Returns:
         A validated SQLite SQL string.
@@ -124,9 +129,12 @@ def generate_sql(query: str, query_plan: str) -> str:
     Raises:
         ValueError: If the generated SQL fails validation after retries.
     """
+    # Convert QueryPlan to structured format for LLM
+    plan_json = json.dumps(query_plan.model_dump(), indent=2)
+    
     prompt = (
         f"Question: {query}\n\n"
-        f"Query Plan:\n{query_plan}\n\n"
+        f"Query Plan (JSON):\n{plan_json}\n\n"
         f"SQL:"
     )
 
@@ -151,7 +159,7 @@ def generate_sql(query: str, query_plan: str) -> str:
                 config=types.GenerateContentConfig(
                     system_instruction=_SYSTEM,
                     temperature=0.0,
-                    max_output_tokens=3000,
+                    max_output_tokens=4000,
                 ),
             )
 

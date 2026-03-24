@@ -67,21 +67,33 @@ Rules for intent:
   When intent is "off_topic", set retrieval_mode to "sql" (ignored by system).
 
 Rules for retrieval_mode:
-  "sql"      — query involves specific IDs, counts, totals, date filters,
-               status checks, flow traces, or structured comparisons
-  "semantic" — query is vague or descriptive without specific IDs
+  "sql"      — query involves:
+               • counts, totals, sums, averages ("total revenue", "count orders")
+               • specific IDs or references ("billing doc 9050", "customer 12345")
+               • date ranges or status filters
+               • flow traces ("trace payment", "trace delivery")
+               • structured comparisons ("orders vs deliveries", "top products")
+               • financial figures ("revenue", "amount", "payment")
+               Even if products are fuzzy (e.g. "skincare"), if the query asks for
+               aggregations like total/sum/count, use SQL.
+               
+  "semantic" — query is exploratory and vague without aggregation
                (e.g. "find skincare products", "show me customers in Maharashtra")
-  "hybrid"   — query needs fuzzy entity discovery AND precise figures
-               (e.g. "how much revenue came from face serum products?")
+               
+  "hybrid"   — query needs fuzzy entity discovery without aggregation
+               (e.g. "what kind of products does customer X buy?")
 
 Examples:
-  "Which products have the most billing documents?"  → domain, sql
-  "Trace billing document 90504259"                 → domain, sql
-  "Sales orders with no delivery"                   → domain, sql
-  "Find products related to sunscreen"               → domain, semantic
-  "Total revenue from haircare products"             → domain, hybrid
-  "What is the capital of France?"                  → off_topic, sql
-  "Write me a poem"                                 → off_topic, sql
+  "What products have the most billing documents?"  → domain, sql (aggregation)
+  "Trace billing document 90504259"                → domain, sql (specific ID)
+  "Total revenue from customers in Delhi"          → domain, sql (aggregation + vague region)
+  "What is the total revenue from customers who bought skincare?" → domain, sql (total revenue)
+  "Sum of all order amounts for product SKU-123"  → domain, sql (aggregation + specific ID)
+  "Find products related to sunscreen"             → domain, semantic (exploratory, no aggregation)
+  "How many customers bought haircare products?"   → domain, sql (count aggregation)
+  "Show me orders from this month"                 → domain, sql (date filter)
+  "What is the capital of France?"                → off_topic, sql
+  "Write me a poem"                               → off_topic, sql
 """
 
 

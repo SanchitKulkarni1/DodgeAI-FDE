@@ -1,4 +1,4 @@
-from typing import TypedDict, List, Optional
+from typing import TypedDict, List, Optional, Any
 
 
 class GraphState(TypedDict, total=False):
@@ -13,7 +13,7 @@ class GraphState(TypedDict, total=False):
     retrieval_mode: Optional[str]  # "sql" | "semantic" | "hybrid"
 
     # SQL path
-    query_plan: Optional[str]
+    query_plan: Optional[Any]  # QueryPlan object, dict, str, or None
     sql_query: Optional[str]
     query_result: Optional[List[dict]]
 

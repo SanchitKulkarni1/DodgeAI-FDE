@@ -111,7 +111,7 @@ class HighlightEdge(BaseModel):
 class QueryResponse(BaseModel):
     answer: str = Field(description="Natural language answer grounded in data")
     retrieval_mode: str = Field(description="sql | semantic | hybrid | off_topic")
-    query_plan: str | None = Field(None, description="Plain-English query plan (SQL path only)")
+    query_plan: dict | None = Field(None, description="Structured query plan (SQL path only) - JSON dict from QueryPlan Pydantic model")
     sql_query: str | None = Field(None, description="Executed SQL statement (SQL / hybrid path)")
     highlight_nodes: list[HighlightNode] = Field(default_factory=list)
     highlight_edges: list[HighlightEdge] = Field(default_factory=list)
@@ -145,10 +145,21 @@ def _parse_response(state: GraphState, latency_ms: float) -> QueryResponse:
     nodes = [HighlightNode(**n) for n in (state.get("highlight_nodes") or [])]
     edges = [HighlightEdge(**e) for e in (state.get("highlight_edges") or [])]
 
+    # Convert QueryPlan object to dict for JSON serialization
+    query_plan = state.get("query_plan")
+    query_plan_dict = None
+    if query_plan:
+        # If it's a Pydantic QueryPlan object, convert to dict
+        if hasattr(query_plan, "model_dump"):
+            query_plan_dict = query_plan.model_dump()
+        else:
+            # If it's already a dict or string, keep as is
+            query_plan_dict = query_plan
+
     return QueryResponse(
         answer=state.get("final_answer") or "No answer generated.",
         retrieval_mode=state.get("retrieval_mode") or "unknown",
-        query_plan=state.get("query_plan"),
+        query_plan=query_plan_dict,
         sql_query=state.get("sql_query"),
         highlight_nodes=nodes,
         highlight_edges=edges,

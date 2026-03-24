@@ -89,7 +89,7 @@ def write_answer(
     query: str,
     sql_results: list[dict],
     semantic_results: list[dict],
-    query_plan: str | None = None,
+    query_plan = None,  # Can be QueryPlan object, str, dict, or None
     sql_query: str | None = None,
     sql_failed: bool = False,
     sql_error: str | None = None,
@@ -102,8 +102,8 @@ def write_answer(
         sql_results:      List of row dicts from execute_node (may be empty).
         semantic_results: List of entity dicts from semantic/hybrid search
                           (may be empty).
-        query_plan:       Plain-English plan from planner_node (may be None
-                          for semantic-only paths).
+        query_plan:       Structured plan (QueryPlan object, dict, str, or None)
+                          from planner_node (may be None for semantic-only paths).
         sql_query:        The exact SQL executed by execute_node (may be None
                           for semantic-only paths). This is the most important
                           grounding context — it tells the LLM exactly what
@@ -120,8 +120,33 @@ def write_answer(
     reasoning_parts = []
 
     if query_plan:
+        # Convert QueryPlan object to readable format
+        plan_str = query_plan
+        if hasattr(query_plan, "model_dump"):
+            # It's a Pydantic object
+            plan_dict = query_plan.model_dump()
+            plan_str = (
+                f"Intent: {plan_dict.get('intent')}\n"
+                f"Tables: {', '.join(plan_dict.get('tables', []))}\n"
+                f"Filters: {len(plan_dict.get('filters', []))} conditions\n"
+                f"Joins: {len(plan_dict.get('joins', []))} joins\n"
+                f"Aggregation: {plan_dict.get('aggregation', 'none')}\n"
+                f"Reasoning: {plan_dict.get('reasoning', 'N/A')}"
+            )
+        elif isinstance(query_plan, dict):
+            # It's a dict
+            plan_str = (
+                f"Intent: {query_plan.get('intent')}\n"
+                f"Tables: {', '.join(query_plan.get('tables', []))}\n"
+                f"Filters: {len(query_plan.get('filters', []))} conditions\n"
+                f"Joins: {len(query_plan.get('joins', []))} joins\n"
+                f"Aggregation: {query_plan.get('aggregation', 'none')}\n"
+                f"Reasoning: {query_plan.get('reasoning', 'N/A')}"
+            )
+        # else: it's a string, use as is
+        
         reasoning_parts.append(
-            f"QUERY PLAN (what was retrieved and why):\n{query_plan}"
+            f"QUERY PLAN (what was retrieved and why):\n{plan_str}"
         )
 
     if sql_query:

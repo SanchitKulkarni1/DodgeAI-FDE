@@ -79,7 +79,7 @@ def route_node(state: GraphState) -> dict[str, Any]:
 def planner_node(state: GraphState) -> dict[str, Any]:
     """
     Input  : state["resolved_query"]
-    Output : state["query_plan"]
+    Output : state["query_plan"] (QueryPlan Pydantic object)
     """
     from llm.planner import build_query_plan
 
@@ -87,7 +87,13 @@ def planner_node(state: GraphState) -> dict[str, Any]:
 
     query_plan = build_query_plan(resolved_query)
 
-    log.info("[planner_node] query_plan=%r", query_plan[:120])
+    log.info(
+        "[planner_node] intent=%s tables=%s joins=%d filters=%d",
+        query_plan.intent,
+        query_plan.tables,
+        len(query_plan.joins),
+        len(query_plan.filters)
+    )
     return {"query_plan": query_plan}
 
 
@@ -97,13 +103,17 @@ def planner_node(state: GraphState) -> dict[str, Any]:
 
 def sql_gen_node(state: GraphState) -> dict[str, Any]:
     """
-    Input  : state["resolved_query"], state["query_plan"]
+    Input  : state["resolved_query"], state["query_plan"] (QueryPlan object)
     Output : state["sql_query"]  or  state["error"]
     """
     from llm.sql_generator import generate_sql
 
     resolved_query = state.get("resolved_query") or state["user_query"]
-    query_plan     = state.get("query_plan") or ""
+    query_plan = state.get("query_plan")
+    
+    if not query_plan:
+        log.error("[sql_gen_node] query_plan is missing from state")
+        return {"sql_query": None, "error": "No query plan provided"}
 
     try:
         sql = generate_sql(
