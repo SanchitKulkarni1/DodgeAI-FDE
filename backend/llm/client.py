@@ -12,10 +12,10 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 log = logging.getLogger(__name__)
 MODEL = "gemini-flash-latest"
 
-# Extract all unique GEMINI_API_KEY environment variables (e.g., GEMINI_API_KEY, GEMINI_API_KEY_1, GEMINI_API_KEY_2)
+# Extract all unique Gemini API key environment variables (e.g., GEMINI_1, GEMINI_2, GEMINI_API_KEY)
 api_keys = []
 for k, v in os.environ.items():
-    if k.startswith("GEMINI_API_KEY") and v.strip():
+    if "GEMINI" in k.upper() and v.strip():
         if v.strip() not in api_keys:
             api_keys.append(v.strip())
 
