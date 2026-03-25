@@ -317,7 +317,7 @@ def build_index() -> None:
                bdh.company_code, bdh.accounting_document
         FROM billing_document_headers bdh
         LEFT JOIN business_partners bp ON bdh.sold_to_party = bp.customer
-        WHERE bdh.billing_doc_is_cancelled = 0
+        WHERE bdh.billing_doc_is_cancelled = FALSE
     """).fetchall()
 
     for (bd, bd_type, cust_id, cust_name, amount, bd_date,

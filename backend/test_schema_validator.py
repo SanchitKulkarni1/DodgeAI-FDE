@@ -26,7 +26,7 @@ def test_valid_revenue_aggregation():
     FROM billing_document_items bdi
     JOIN billing_document_headers bdh 
       ON bdi.billing_document = bdh.billing_document
-    WHERE bdh.billing_doc_is_cancelled = 0
+    WHERE bdh.billing_doc_is_cancelled = FALSE
     LIMIT 200
     """
     
@@ -46,7 +46,7 @@ def test_valid_count_by_customer():
       ON bdi.billing_document = bdh.billing_document
     JOIN business_partners bp 
       ON bdh.sold_to_party = bp.customer
-    WHERE bdh.billing_doc_is_cancelled = 0
+    WHERE bdh.billing_doc_is_cancelled = FALSE
     GROUP BY bp.business_partner_full_name
     LIMIT 200
     """
@@ -182,7 +182,7 @@ def test_report_sql_issues_valid():
     sql = """
     SELECT COUNT(*) as doc_count
     FROM billing_document_headers
-    WHERE billing_doc_is_cancelled = 0
+    WHERE billing_doc_is_cancelled = FALSE
     """
     
     report = report_sql_issues(sql)

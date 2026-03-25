@@ -113,7 +113,7 @@ CRITICAL RULES (strictly enforced):
        WRONG:   billing_document_items.billing     ← DOES NOT EXIST
   5. Follow the CRITICAL JOIN PATHS exactly — do not invent join conditions.
   6. Always filter product_descriptions with: language = 'EN'
-  7. For active billing docs: billing_doc_is_cancelled = 0
+  7. For active billing docs: billing_doc_is_cancelled = FALSE
   8. Payment link: payments_ar.clearing_accounting_document = billing_document_headers.accounting_document
   9. IGNORE entity types that are irrelevant to the question.
      For revenue/amount queries, scope by PRODUCT IDs using:
@@ -125,7 +125,7 @@ CRITICAL RULES (strictly enforced):
 REQUIRED JOIN for product-to-revenue:
   billing_document_items bdi
   JOIN billing_document_headers bdh ON bdi.billing_document = bdh.billing_document
-  WHERE bdh.billing_doc_is_cancelled = 0 AND bdi.material IN (...)
+  WHERE bdh.billing_doc_is_cancelled = FALSE AND bdi.material IN (...)
 
 {DB_SCHEMA}
 """

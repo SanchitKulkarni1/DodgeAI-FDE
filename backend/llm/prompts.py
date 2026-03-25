@@ -42,8 +42,8 @@ BUSINESS SCOPE:
   - Plants         : 44 plants
 
 KEY DATA QUALITY FACTS:
-  - 80 of 163 billing documents are CANCELLED (billing_doc_is_cancelled = 1).
-    ALWAYS filter: WHERE billing_doc_is_cancelled = 0 for any revenue query.
+  - 80 of 163 billing documents are CANCELLED (billing_doc_is_cancelled = TRUE).
+    ALWAYS filter: WHERE billing_doc_is_cancelled = FALSE for any revenue query.
   - 14 sales orders have no delivery (overall_delivery_status = 'A').
     These are the "broken flow" orders — valid for gap queries.
   - 3 deliveries have no billing document — valid incomplete-flow data.
@@ -285,7 +285,7 @@ Deliveries with no billing:
 
 Active billing docs with no payment:
   billing_document_headers bdh
-  WHERE bdh.billing_doc_is_cancelled = 0
+  WHERE bdh.billing_doc_is_cancelled = FALSE
   AND NOT EXISTS (
     SELECT 1 FROM payments_ar p
     WHERE p.clearing_accounting_document = bdh.accounting_document

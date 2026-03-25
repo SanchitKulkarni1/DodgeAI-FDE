@@ -29,9 +29,21 @@ long and the business question needs to be re-anchored.
 
 import json
 import logging
+from datetime import date, datetime
+from decimal import Decimal
 from llm.client import gemini, MODEL, types
 
 log = logging.getLogger(__name__)
+
+
+class JSONEncoder(json.JSONEncoder):
+    """Custom JSON encoder that handles date, datetime, and Decimal types."""
+    def default(self, obj):
+        if isinstance(obj, (date, datetime)):
+            return obj.isoformat()
+        if isinstance(obj, Decimal):
+            return float(obj)
+        return super().default(obj)
 
 _SYSTEM = """\
 You are a data analyst assistant for an Order-to-Cash (O2C) business system.
@@ -52,7 +64,7 @@ Rules (strictly enforced):
   1. ONLY use information present in the provided data. Never add facts,
      figures, or entity names that are not in the data.
   2. Use the SQL query to understand WHAT the numbers mean — e.g. if the
-     SQL filters billing_doc_is_cancelled = 0, say "active billing documents"
+     SQL filters billing_doc_is_cancelled = FALSE, say "active billing documents"
      not just "billing documents". If it uses SUM(net_amount), say "total
      net revenue" not just "amount".
   3. Use the query plan to understand the INTENT — restate the business
@@ -171,8 +183,8 @@ def write_answer(
 
     # ── Data section ────────────────────────────────────────────────────────
     # Cap at 50 rows / 20 semantic results to stay within token limits.
-    sql_snippet      = json.dumps(sql_results[:50],      indent=2)
-    semantic_snippet = json.dumps(semantic_results[:20], indent=2)
+    sql_snippet      = json.dumps(sql_results[:50],      indent=2, cls=JSONEncoder)
+    semantic_snippet = json.dumps(semantic_results[:20], indent=2, cls=JSONEncoder)
 
     has_sql      = bool(sql_results)
     has_semantic = bool(semantic_results)

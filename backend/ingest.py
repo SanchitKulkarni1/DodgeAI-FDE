@@ -1,17 +1,20 @@
 """
-ingest.py — SAP Order-to-Cash Dataset → SQLite
+ingest.py — SAP Order-to-Cash Dataset → PostgreSQL
 
 Usage:
-    python ingest.py --data-dir ./sap-o2c-data --db-path ./o2c.db
+    python ingest.py --data-dir ./sap-o2c-data --db-name dodgeai_o2c
 
 What it does:
     1. Reads all JSONL part-files from each entity folder
-    2. Creates a normalized SQLite schema (19 tables)
+    2. Creates a normalized PostgreSQL schema (19 tables)
     3. Flattens nested fields (e.g. creationTime dict → creationTime TEXT)
-    4. Coerces types (amounts → REAL, booleans → INTEGER, dates → TEXT ISO)
+    4. Coerces types (amounts → NUMERIC, booleans → BOOLEAN, dates → DATE)
     5. Deduplicates on primary keys before insert
     6. Creates all indexes needed for graph traversal and LLM-generated SQL
     7. Prints a summary of row counts and join-path validation
+    
+Database credentials are read from environment variables:
+    DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME
 """
 
 import argparse
@@ -19,10 +22,15 @@ import glob
 import json
 import logging
 import os
-import sqlite3
 import sys
 from pathlib import Path
 from typing import Any
+import psycopg2
+import psycopg2.extras
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 logging.basicConfig(
     level=logging.INFO,
@@ -31,20 +39,26 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
+# PostgreSQL connection parameters from environment
+DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_PORT = int(os.getenv("DB_PORT", 5432))
+DB_USER = os.getenv("DB_USER", "postgres")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "postgres")
+
 
 # ---------------------------------------------------------------------------
 # Schema definitions
 # Each entry: (table_name, folder_name, primary_key_cols, column_definitions)
-# Column definitions: list of (col_name, sqlite_type, jsonl_key, transform_fn)
+# Column definitions: list of (col_name, postgresql_type, jsonl_key, transform_fn)
 # transform_fn is optional — None means use raw value as-is (cast to type).
 # ---------------------------------------------------------------------------
 
 def _bool(v):
     if isinstance(v, bool):
-        return 1 if v else 0
+        return v
     if isinstance(v, str):
-        return 1 if v.lower() in ("true", "1", "yes") else 0
-    return 0 if v is None else int(bool(v))
+        return v.lower() in ("true", "1", "yes")
+    return bool(v) if v is not None else None
 
 
 def _real(v: Any) -> float | None:
@@ -77,43 +91,44 @@ def _date(v):
     # '2025-04-02T00:00:00.000Z' → '2025-04-02'
     return s.split("T")[0]
 
+
 def _datetime(v):
     if not v:
         return None
     return str(v)
 
 
-# (col_name, sqlite_type, jsonl_key, transform_fn)
+# (col_name, postgresql_type, jsonl_key, transform_fn)
 SCHEMAS: dict[str, Any] = {
 
     "sales_order_headers": {
         "folder": "sales_order_headers",
         "pk": ["sales_order"],
         "cols": [
-            ("sales_order",                "TEXT",    "salesOrder",                  _text),
-            ("sales_order_type",           "TEXT",    "salesOrderType",               _text),
-            ("sales_organization",         "TEXT",    "salesOrganization",            _text),
-            ("distribution_channel",       "TEXT",    "distributionChannel",          _text),
-            ("organization_division",      "TEXT",    "organizationDivision",         _text),
-            ("sales_group",                "TEXT",    "salesGroup",                   _text),
-            ("sales_office",               "TEXT",    "salesOffice",                  _text),
-            ("sold_to_party",              "TEXT",    "soldToParty",                  _text),
-            ("creation_date",              "TEXT",    "creationDate",                 _date),
-            ("created_by_user",            "TEXT",    "createdByUser",                _text),
-            ("last_change_datetime",       "TEXT",    "lastChangeDateTime",           _datetime),
-            ("total_net_amount",           "REAL",    "totalNetAmount",               _real),
-            ("transaction_currency",       "TEXT",    "transactionCurrency",          _text),
-            ("overall_delivery_status",    "TEXT",    "overallDeliveryStatus",        _text),
-            ("overall_billing_status",     "TEXT",    "overallOrdReltdBillgStatus",   _text),
-            ("overall_sd_ref_status",      "TEXT",    "overallSdDocReferenceStatus",  _text),
-            ("pricing_date",               "TEXT",    "pricingDate",                  _date),
-            ("requested_delivery_date",    "TEXT",    "requestedDeliveryDate",        _date),
-            ("header_billing_block",       "TEXT",    "headerBillingBlockReason",     _text),
-            ("delivery_block_reason",      "TEXT",    "deliveryBlockReason",          _text),
-            ("incoterms_classification",   "TEXT",    "incotermsClassification",      _text),
-            ("incoterms_location1",        "TEXT",    "incotermsLocation1",           _text),
-            ("customer_payment_terms",     "TEXT",    "customerPaymentTerms",         _text),
-            ("total_credit_check_status",  "TEXT",    "totalCreditCheckStatus",       _text),
+            ("sales_order",                "VARCHAR(20)",    "salesOrder",                  _text),
+            ("sales_order_type",           "VARCHAR(4)",     "salesOrderType",              _text),
+            ("sales_organization",         "VARCHAR(4)",     "salesOrganization",           _text),
+            ("distribution_channel",       "VARCHAR(2)",     "distributionChannel",         _text),
+            ("organization_division",      "VARCHAR(2)",     "organizationDivision",        _text),
+            ("sales_group",                "VARCHAR(3)",     "salesGroup",                  _text),
+            ("sales_office",               "VARCHAR(4)",     "salesOffice",                 _text),
+            ("sold_to_party",              "VARCHAR(20)",    "soldToParty",                 _text),
+            ("creation_date",              "DATE",           "creationDate",                _date),
+            ("created_by_user",            "VARCHAR(12)",    "createdByUser",               _text),
+            ("last_change_datetime",       "VARCHAR(30)",    "lastChangeDateTime",          _datetime),
+            ("total_net_amount",           "NUMERIC(15,2)",  "totalNetAmount",              _real),
+            ("transaction_currency",       "VARCHAR(3)",     "transactionCurrency",         _text),
+            ("overall_delivery_status",    "VARCHAR(1)",     "overallDeliveryStatus",       _text),
+            ("overall_billing_status",     "VARCHAR(1)",     "overallOrdReltdBillgStatus",  _text),
+            ("overall_sd_ref_status",      "VARCHAR(1)",     "overallSdDocReferenceStatus", _text),
+            ("pricing_date",               "DATE",           "pricingDate",                 _date),
+            ("requested_delivery_date",    "DATE",           "requestedDeliveryDate",       _date),
+            ("header_billing_block",       "VARCHAR(2)",     "headerBillingBlockReason",    _text),
+            ("delivery_block_reason",      "VARCHAR(2)",     "deliveryBlockReason",         _text),
+            ("incoterms_classification",   "VARCHAR(3)",     "incotermsClassification",     _text),
+            ("incoterms_location1",        "VARCHAR(27)",    "incotermsLocation1",          _text),
+            ("customer_payment_terms",     "VARCHAR(4)",     "customerPaymentTerms",        _text),
+            ("total_credit_check_status",  "VARCHAR(1)",     "totalCreditCheckStatus",      _text),
         ],
     },
 
@@ -121,19 +136,19 @@ SCHEMAS: dict[str, Any] = {
         "folder": "sales_order_items",
         "pk": ["sales_order", "sales_order_item"],
         "cols": [
-            ("sales_order",                "TEXT",    "salesOrder",                  _text),
-            ("sales_order_item",           "TEXT",    "salesOrderItem",               _text),
-            ("sales_order_item_category",  "TEXT",    "salesOrderItemCategory",       _text),
-            ("material",                   "TEXT",    "material",                     _text),
-            ("requested_quantity",         "REAL",    "requestedQuantity",            _real),
-            ("requested_quantity_unit",    "TEXT",    "requestedQuantityUnit",        _text),
-            ("net_amount",                 "REAL",    "netAmount",                    _real),
-            ("transaction_currency",       "TEXT",    "transactionCurrency",          _text),
-            ("material_group",             "TEXT",    "materialGroup",                _text),
-            ("production_plant",           "TEXT",    "productionPlant",              _text),
-            ("storage_location",           "TEXT",    "storageLocation",              _text),
-            ("rejection_reason",           "TEXT",    "salesDocumentRjcnReason",      _text),
-            ("item_billing_block",         "TEXT",    "itemBillingBlockReason",       _text),
+            ("sales_order",                "VARCHAR(20)",    "salesOrder",                  _text),
+            ("sales_order_item",           "VARCHAR(6)",     "salesOrderItem",              _text),
+            ("sales_order_item_category",  "VARCHAR(1)",     "salesOrderItemCategory",      _text),
+            ("material",                   "VARCHAR(40)",    "material",                    _text),
+            ("requested_quantity",         "NUMERIC(13,3)",  "requestedQuantity",           _real),
+            ("requested_quantity_unit",    "VARCHAR(3)",     "requestedQuantityUnit",       _text),
+            ("net_amount",                 "NUMERIC(15,2)",  "netAmount",                   _real),
+            ("transaction_currency",       "VARCHAR(3)",     "transactionCurrency",         _text),
+            ("material_group",             "VARCHAR(9)",     "materialGroup",               _text),
+            ("production_plant",           "VARCHAR(4)",     "productionPlant",             _text),
+            ("storage_location",           "VARCHAR(4)",     "storageLocation",             _text),
+            ("rejection_reason",           "VARCHAR(3)",     "salesDocumentRjcnReason",     _text),
+            ("item_billing_block",         "VARCHAR(2)",     "itemBillingBlockReason",      _text),
         ],
     },
 
@@ -141,12 +156,12 @@ SCHEMAS: dict[str, Any] = {
         "folder": "sales_order_schedule_lines",
         "pk": ["sales_order", "sales_order_item", "schedule_line"],
         "cols": [
-            ("sales_order",                "TEXT",    "salesOrder",                  _text),
-            ("sales_order_item",           "TEXT",    "salesOrderItem",               _text),
-            ("schedule_line",              "TEXT",    "scheduleLine",                 _text),
-            ("confirmed_delivery_date",    "TEXT",    "confirmedDeliveryDate",        _date),
-            ("order_quantity_unit",        "TEXT",    "orderQuantityUnit",            _text),
-            ("confirmed_quantity",         "REAL",    "confdOrderQtyByMatlAvailCheck",_real),
+            ("sales_order",                "VARCHAR(20)",    "salesOrder",                  _text),
+            ("sales_order_item",           "VARCHAR(6)",     "salesOrderItem",              _text),
+            ("schedule_line",              "VARCHAR(4)",     "scheduleLine",                _text),
+            ("confirmed_delivery_date",    "DATE",           "confirmedDeliveryDate",       _date),
+            ("order_quantity_unit",        "VARCHAR(3)",     "orderQuantityUnit",           _text),
+            ("confirmed_quantity",         "NUMERIC(13,3)",  "confdOrderQtyByMatlAvailCheck", _real),
         ],
     },
 
@@ -154,19 +169,19 @@ SCHEMAS: dict[str, Any] = {
         "folder": "outbound_delivery_headers",
         "pk": ["delivery_document"],
         "cols": [
-            ("delivery_document",              "TEXT",  "deliveryDocument",              _text),
-            ("shipping_point",                 "TEXT",  "shippingPoint",                 _text),
-            ("creation_date",                  "TEXT",  "creationDate",                  _date),
-            ("creation_time",                  "TEXT",  "creationTime",                  _text),
-            ("last_change_date",               "TEXT",  "lastChangeDate",                _date),
-            ("actual_goods_movement_date",     "TEXT",  "actualGoodsMovementDate",       _date),
-            ("actual_goods_movement_time",     "TEXT",  "actualGoodsMovementTime",       _text),
-            ("delivery_block_reason",          "TEXT",  "deliveryBlockReason",           _text),
-            ("header_billing_block",           "TEXT",  "headerBillingBlockReason",      _text),
-            ("overall_goods_movement_status",  "TEXT",  "overallGoodsMovementStatus",    _text),
-            ("overall_picking_status",         "TEXT",  "overallPickingStatus",          _text),
-            ("overall_pod_status",             "TEXT",  "overallProofOfDeliveryStatus",  _text),
-            ("hdr_general_incompletion",       "TEXT",  "hdrGeneralIncompletionStatus",  _text),
+            ("delivery_document",              "VARCHAR(20)",     "deliveryDocument",            _text),
+            ("shipping_point",                 "VARCHAR(4)",      "shippingPoint",               _text),
+            ("creation_date",                  "DATE",            "creationDate",                _date),
+            ("creation_time",                  "VARCHAR(8)",      "creationTime",                _text),
+            ("last_change_date",               "DATE",            "lastChangeDate",              _date),
+            ("actual_goods_movement_date",     "DATE",            "actualGoodsMovementDate",     _date),
+            ("actual_goods_movement_time",     "VARCHAR(8)",      "actualGoodsMovementTime",     _text),
+            ("delivery_block_reason",          "VARCHAR(2)",      "deliveryBlockReason",         _text),
+            ("header_billing_block",           "VARCHAR(2)",      "headerBillingBlockReason",    _text),
+            ("overall_goods_movement_status",  "VARCHAR(1)",      "overallGoodsMovementStatus",  _text),
+            ("overall_picking_status",         "VARCHAR(1)",      "overallPickingStatus",        _text),
+            ("overall_pod_status",             "VARCHAR(1)",      "overallProofOfDeliveryStatus", _text),
+            ("hdr_general_incompletion",       "VARCHAR(1)",      "hdrGeneralIncompletionStatus", _text),
         ],
     },
 
@@ -174,17 +189,17 @@ SCHEMAS: dict[str, Any] = {
         "folder": "outbound_delivery_items",
         "pk": ["delivery_document", "delivery_document_item"],
         "cols": [
-            ("delivery_document",          "TEXT",  "deliveryDocument",          _text),
-            ("delivery_document_item",     "TEXT",  "deliveryDocumentItem",      _text),
-            ("reference_sd_document",      "TEXT",  "referenceSdDocument",       _text),   # → sales_order
-            ("reference_sd_doc_item",      "TEXT",  "referenceSdDocumentItem",   _text),
-            ("actual_delivery_quantity",   "REAL",  "actualDeliveryQuantity",    _real),
-            ("delivery_quantity_unit",     "TEXT",  "deliveryQuantityUnit",      _text),
-            ("plant",                      "TEXT",  "plant",                     _text),
-            ("storage_location",           "TEXT",  "storageLocation",           _text),
-            ("batch",                      "TEXT",  "batch",                     _text),
-            ("item_billing_block",         "TEXT",  "itemBillingBlockReason",    _text),
-            ("last_change_date",           "TEXT",  "lastChangeDate",            _date),
+            ("delivery_document",          "VARCHAR(20)",    "deliveryDocument",          _text),
+            ("delivery_document_item",     "VARCHAR(6)",     "deliveryDocumentItem",      _text),
+            ("reference_sd_document",      "VARCHAR(20)",    "referenceSdDocument",       _text),
+            ("reference_sd_doc_item",      "VARCHAR(6)",     "referenceSdDocumentItem",   _text),
+            ("actual_delivery_quantity",   "NUMERIC(13,3)",  "actualDeliveryQuantity",    _real),
+            ("delivery_quantity_unit",     "VARCHAR(3)",     "deliveryQuantityUnit",      _text),
+            ("plant",                      "VARCHAR(4)",     "plant",                     _text),
+            ("storage_location",           "VARCHAR(4)",     "storageLocation",           _text),
+            ("batch",                      "VARCHAR(10)",    "batch",                     _text),
+            ("item_billing_block",         "VARCHAR(2)",     "itemBillingBlockReason",    _text),
+            ("last_change_date",           "DATE",           "lastChangeDate",            _date),
         ],
     },
 
@@ -192,20 +207,20 @@ SCHEMAS: dict[str, Any] = {
         "folder": "billing_document_headers",
         "pk": ["billing_document"],
         "cols": [
-            ("billing_document",           "TEXT",     "billingDocument",             _text),
-            ("billing_document_type",      "TEXT",     "billingDocumentType",          _text),
-            ("billing_document_date",      "TEXT",     "billingDocumentDate",          _date),
-            ("creation_date",              "TEXT",     "creationDate",                 _date),
-            ("creation_time",              "TEXT",     "creationTime",                 _text),
-            ("last_change_datetime",       "TEXT",     "lastChangeDateTime",           _datetime),
-            ("billing_doc_is_cancelled",   "INTEGER",  "billingDocumentIsCancelled",   _bool),
-            ("cancelled_billing_document", "TEXT",     "cancelledBillingDocument",     _text),
-            ("total_net_amount",           "REAL",     "totalNetAmount",               _real),
-            ("transaction_currency",       "TEXT",     "transactionCurrency",          _text),
-            ("company_code",               "TEXT",     "companyCode",                  _text),
-            ("fiscal_year",                "TEXT",     "fiscalYear",                   _text),
-            ("accounting_document",        "TEXT",     "accountingDocument",           _text),   # → journal / payment
-            ("sold_to_party",              "TEXT",     "soldToParty",                  _text),   # → business_partners
+            ("billing_document",           "VARCHAR(20)",     "billingDocument",             _text),
+            ("billing_document_type",      "VARCHAR(2)",      "billingDocumentType",         _text),
+            ("billing_document_date",      "DATE",            "billingDocumentDate",         _date),
+            ("creation_date",              "DATE",            "creationDate",                _date),
+            ("creation_time",              "VARCHAR(8)",      "creationTime",                _text),
+            ("last_change_datetime",       "VARCHAR(30)",     "lastChangeDateTime",          _datetime),
+            ("billing_doc_is_cancelled",   "BOOLEAN",         "billingDocumentIsCancelled",  _bool),
+            ("cancelled_billing_document", "VARCHAR(20)",     "cancelledBillingDocument",    _text),
+            ("total_net_amount",           "NUMERIC(15,2)",   "totalNetAmount",              _real),
+            ("transaction_currency",       "VARCHAR(3)",      "transactionCurrency",         _text),
+            ("company_code",               "VARCHAR(4)",      "companyCode",                 _text),
+            ("fiscal_year",                "VARCHAR(4)",      "fiscalYear",                  _text),
+            ("accounting_document",        "VARCHAR(20)",     "accountingDocument",          _text),
+            ("sold_to_party",              "VARCHAR(20)",     "soldToParty",                 _text),
         ],
     },
 
@@ -213,15 +228,15 @@ SCHEMAS: dict[str, Any] = {
         "folder": "billing_document_items",
         "pk": ["billing_document", "billing_document_item"],
         "cols": [
-            ("billing_document",           "TEXT",  "billingDocument",           _text),
-            ("billing_document_item",      "TEXT",  "billingDocumentItem",       _text),
-            ("material",                   "TEXT",  "material",                  _text),   # → products
-            ("billing_quantity",           "REAL",  "billingQuantity",           _real),
-            ("billing_quantity_unit",      "TEXT",  "billingQuantityUnit",       _text),
-            ("net_amount",                 "REAL",  "netAmount",                 _real),
-            ("transaction_currency",       "TEXT",  "transactionCurrency",       _text),
-            ("reference_sd_document",      "TEXT",  "referenceSdDocument",       _text),   # → delivery_document
-            ("reference_sd_doc_item",      "TEXT",  "referenceSdDocumentItem",   _text),
+            ("billing_document",           "VARCHAR(20)",  "billingDocument",           _text),
+            ("billing_document_item",      "VARCHAR(6)",   "billingDocumentItem",       _text),
+            ("material",                   "VARCHAR(40)",  "material",                  _text),
+            ("billing_quantity",           "NUMERIC(13,3)", "billingQuantity",           _real),
+            ("billing_quantity_unit",      "VARCHAR(3)",   "billingQuantityUnit",       _text),
+            ("net_amount",                 "NUMERIC(15,2)", "netAmount",                 _real),
+            ("transaction_currency",       "VARCHAR(3)",   "transactionCurrency",       _text),
+            ("reference_sd_document",      "VARCHAR(20)",  "referenceSdDocument",       _text),
+            ("reference_sd_doc_item",      "VARCHAR(6)",   "referenceSdDocumentItem",   _text),
         ],
     },
 
@@ -229,20 +244,20 @@ SCHEMAS: dict[str, Any] = {
         "folder": "billing_document_cancellations",
         "pk": ["billing_document"],
         "cols": [
-            ("billing_document",           "TEXT",     "billingDocument",             _text),
-            ("billing_document_type",      "TEXT",     "billingDocumentType",          _text),
-            ("billing_document_date",      "TEXT",     "billingDocumentDate",          _date),
-            ("creation_date",              "TEXT",     "creationDate",                 _date),
-            ("creation_time",              "TEXT",     "creationTime",                 _text),
-            ("last_change_datetime",       "TEXT",     "lastChangeDateTime",           _datetime),
-            ("billing_doc_is_cancelled",   "INTEGER",  "billingDocumentIsCancelled",   _bool),
-            ("cancelled_billing_document", "TEXT",     "cancelledBillingDocument",     _text),
-            ("total_net_amount",           "REAL",     "totalNetAmount",               _real),
-            ("transaction_currency",       "TEXT",     "transactionCurrency",          _text),
-            ("company_code",               "TEXT",     "companyCode",                  _text),
-            ("fiscal_year",                "TEXT",     "fiscalYear",                   _text),
-            ("accounting_document",        "TEXT",     "accountingDocument",           _text),
-            ("sold_to_party",              "TEXT",     "soldToParty",                  _text),
+            ("billing_document",           "VARCHAR(20)",     "billingDocument",             _text),
+            ("billing_document_type",      "VARCHAR(2)",      "billingDocumentType",         _text),
+            ("billing_document_date",      "DATE",            "billingDocumentDate",         _date),
+            ("creation_date",              "DATE",            "creationDate",                _date),
+            ("creation_time",              "VARCHAR(8)",      "creationTime",                _text),
+            ("last_change_datetime",       "VARCHAR(30)",     "lastChangeDateTime",          _datetime),
+            ("billing_doc_is_cancelled",   "BOOLEAN",         "billingDocumentIsCancelled",  _bool),
+            ("cancelled_billing_document", "VARCHAR(20)",     "cancelledBillingDocument",    _text),
+            ("total_net_amount",           "NUMERIC(15,2)",   "totalNetAmount",              _real),
+            ("transaction_currency",       "VARCHAR(3)",      "transactionCurrency",         _text),
+            ("company_code",               "VARCHAR(4)",      "companyCode",                 _text),
+            ("fiscal_year",                "VARCHAR(4)",      "fiscalYear",                  _text),
+            ("accounting_document",        "VARCHAR(20)",     "accountingDocument",          _text),
+            ("sold_to_party",              "VARCHAR(20)",     "soldToParty",                 _text),
         ],
     },
 
@@ -250,28 +265,28 @@ SCHEMAS: dict[str, Any] = {
         "folder": "journal_entry_items_accounts_receivable",
         "pk": ["company_code", "fiscal_year", "accounting_document", "accounting_document_item"],
         "cols": [
-            ("company_code",                    "TEXT",  "companyCode",                  _text),
-            ("fiscal_year",                     "TEXT",  "fiscalYear",                   _text),
-            ("accounting_document",             "TEXT",  "accountingDocument",           _text),   # → billing_document_headers
-            ("accounting_document_item",        "TEXT",  "accountingDocumentItem",       _text),
-            ("accounting_document_type",        "TEXT",  "accountingDocumentType",       _text),
-            ("reference_document",              "TEXT",  "referenceDocument",            _text),   # → billing_document (direct)
-            ("gl_account",                      "TEXT",  "glAccount",                    _text),
-            ("customer",                        "TEXT",  "customer",                     _text),   # → business_partners
-            ("cost_center",                     "TEXT",  "costCenter",                   _text),
-            ("profit_center",                   "TEXT",  "profitCenter",                 _text),
-            ("transaction_currency",            "TEXT",  "transactionCurrency",          _text),
-            ("amount_in_transaction_currency",  "REAL",  "amountInTransactionCurrency",  _real),
-            ("company_code_currency",           "TEXT",  "companyCodeCurrency",          _text),
-            ("amount_in_company_code_currency", "REAL",  "amountInCompanyCodeCurrency",  _real),
-            ("posting_date",                    "TEXT",  "postingDate",                  _date),
-            ("document_date",                   "TEXT",  "documentDate",                 _date),
-            ("financial_account_type",          "TEXT",  "financialAccountType",         _text),
-            ("clearing_date",                   "TEXT",  "clearingDate",                 _date),
-            ("clearing_accounting_document",    "TEXT",  "clearingAccountingDocument",   _text),
-            ("clearing_doc_fiscal_year",        "TEXT",  "clearingDocFiscalYear",        _text),
-            ("assignment_reference",            "TEXT",  "assignmentReference",          _text),
-            ("last_change_datetime",            "TEXT",  "lastChangeDateTime",           _datetime),
+            ("company_code",                    "VARCHAR(4)",      "companyCode",                  _text),
+            ("fiscal_year",                     "VARCHAR(4)",      "fiscalYear",                   _text),
+            ("accounting_document",             "VARCHAR(20)",     "accountingDocument",           _text),
+            ("accounting_document_item",        "VARCHAR(6)",      "accountingDocumentItem",       _text),
+            ("accounting_document_type",        "VARCHAR(2)",      "accountingDocumentType",       _text),
+            ("reference_document",              "VARCHAR(20)",     "referenceDocument",            _text),
+            ("gl_account",                      "VARCHAR(10)",     "glAccount",                    _text),
+            ("customer",                        "VARCHAR(20)",     "customer",                     _text),
+            ("cost_center",                     "VARCHAR(10)",     "costCenter",                   _text),
+            ("profit_center",                   "VARCHAR(10)",     "profitCenter",                 _text),
+            ("transaction_currency",            "VARCHAR(3)",      "transactionCurrency",          _text),
+            ("amount_in_transaction_currency",  "NUMERIC(15,2)",   "amountInTransactionCurrency",  _real),
+            ("company_code_currency",           "VARCHAR(3)",      "companyCodeCurrency",          _text),
+            ("amount_in_company_code_currency", "NUMERIC(15,2)",   "amountInCompanyCodeCurrency",  _real),
+            ("posting_date",                    "DATE",            "postingDate",                  _date),
+            ("document_date",                   "DATE",            "documentDate",                 _date),
+            ("financial_account_type",          "VARCHAR(1)",      "financialAccountType",         _text),
+            ("clearing_date",                   "DATE",            "clearingDate",                 _date),
+            ("clearing_accounting_document",    "VARCHAR(20)",     "clearingAccountingDocument",   _text),
+            ("clearing_doc_fiscal_year",        "VARCHAR(4)",      "clearingDocFiscalYear",        _text),
+            ("assignment_reference",            "VARCHAR(18)",     "assignmentReference",          _text),
+            ("last_change_datetime",            "VARCHAR(30)",     "lastChangeDateTime",           _datetime),
         ],
     },
 
@@ -279,30 +294,29 @@ SCHEMAS: dict[str, Any] = {
         "folder": "payments_accounts_receivable",
         "pk": ["company_code", "fiscal_year", "accounting_document", "accounting_document_item"],
         "cols": [
-            ("company_code",                    "TEXT",  "companyCode",                  _text),
-            ("fiscal_year",                     "TEXT",  "fiscalYear",                   _text),
-            ("accounting_document",             "TEXT",  "accountingDocument",           _text),
-            ("accounting_document_item",        "TEXT",  "accountingDocumentItem",       _text),
-            ("customer",                        "TEXT",  "customer",                     _text),   # → business_partners
-            ("clearing_date",                   "TEXT",  "clearingDate",                 _date),
-            # KEY LINK: clearingAccountingDocument → billing_document_headers.accounting_document
-            ("clearing_accounting_document",    "TEXT",  "clearingAccountingDocument",   _text),
-            ("clearing_doc_fiscal_year",        "TEXT",  "clearingDocFiscalYear",        _text),
-            ("amount_in_transaction_currency",  "REAL",  "amountInTransactionCurrency",  _real),
-            ("transaction_currency",            "TEXT",  "transactionCurrency",          _text),
-            ("amount_in_company_code_currency", "REAL",  "amountInCompanyCodeCurrency",  _real),
-            ("company_code_currency",           "TEXT",  "companyCodeCurrency",          _text),
-            ("invoice_reference",               "TEXT",  "invoiceReference",             _text),   # NULL in data
-            ("invoice_reference_fiscal_year",   "TEXT",  "invoiceReferenceFiscalYear",   _text),
-            ("sales_document",                  "TEXT",  "salesDocument",                _text),   # NULL in data
-            ("sales_document_item",             "TEXT",  "salesDocumentItem",            _text),
-            ("posting_date",                    "TEXT",  "postingDate",                  _date),
-            ("document_date",                   "TEXT",  "documentDate",                 _date),
-            ("assignment_reference",            "TEXT",  "assignmentReference",          _text),
-            ("gl_account",                      "TEXT",  "glAccount",                    _text),
-            ("financial_account_type",          "TEXT",  "financialAccountType",         _text),
-            ("profit_center",                   "TEXT",  "profitCenter",                 _text),
-            ("cost_center",                     "TEXT",  "costCenter",                   _text),
+            ("company_code",                    "VARCHAR(4)",      "companyCode",                  _text),
+            ("fiscal_year",                     "VARCHAR(4)",      "fiscalYear",                   _text),
+            ("accounting_document",             "VARCHAR(20)",     "accountingDocument",           _text),
+            ("accounting_document_item",        "VARCHAR(6)",      "accountingDocumentItem",       _text),
+            ("customer",                        "VARCHAR(20)",     "customer",                     _text),
+            ("clearing_date",                   "DATE",            "clearingDate",                 _date),
+            ("clearing_accounting_document",    "VARCHAR(20)",     "clearingAccountingDocument",   _text),
+            ("clearing_doc_fiscal_year",        "VARCHAR(4)",      "clearingDocFiscalYear",        _text),
+            ("amount_in_transaction_currency",  "NUMERIC(15,2)",   "amountInTransactionCurrency",  _real),
+            ("transaction_currency",            "VARCHAR(3)",      "transactionCurrency",          _text),
+            ("amount_in_company_code_currency", "NUMERIC(15,2)",   "amountInCompanyCodeCurrency",  _real),
+            ("company_code_currency",           "VARCHAR(3)",      "companyCodeCurrency",          _text),
+            ("invoice_reference",               "VARCHAR(20)",     "invoiceReference",             _text),
+            ("invoice_reference_fiscal_year",   "VARCHAR(4)",      "invoiceReferenceFiscalYear",   _text),
+            ("sales_document",                  "VARCHAR(20)",     "salesDocument",                _text),
+            ("sales_document_item",             "VARCHAR(6)",      "salesDocumentItem",            _text),
+            ("posting_date",                    "DATE",            "postingDate",                  _date),
+            ("document_date",                   "DATE",            "documentDate",                 _date),
+            ("assignment_reference",            "VARCHAR(18)",     "assignmentReference",          _text),
+            ("gl_account",                      "VARCHAR(10)",     "glAccount",                    _text),
+            ("financial_account_type",          "VARCHAR(1)",      "financialAccountType",         _text),
+            ("profit_center",                   "VARCHAR(10)",     "profitCenter",                 _text),
+            ("cost_center",                     "VARCHAR(10)",     "costCenter",                   _text),
         ],
     },
 
@@ -310,23 +324,23 @@ SCHEMAS: dict[str, Any] = {
         "folder": "business_partners",
         "pk": ["business_partner"],
         "cols": [
-            ("business_partner",           "TEXT",     "businessPartner",              _text),
-            ("customer",                   "TEXT",     "customer",                     _text),   # same as businessPartner in this dataset
-            ("business_partner_category",  "TEXT",     "businessPartnerCategory",       _text),
-            ("business_partner_full_name", "TEXT",     "businessPartnerFullName",       _text),
-            ("business_partner_name",      "TEXT",     "businessPartnerName",           _text),
-            ("organization_bp_name1",      "TEXT",     "organizationBpName1",           _text),
-            ("organization_bp_name2",      "TEXT",     "organizationBpName2",           _text),
-            ("first_name",                 "TEXT",     "firstName",                     _text),
-            ("last_name",                  "TEXT",     "lastName",                      _text),
-            ("industry",                   "TEXT",     "industry",                      _text),
-            ("business_partner_grouping",  "TEXT",     "businessPartnerGrouping",       _text),
-            ("is_blocked",                 "INTEGER",  "businessPartnerIsBlocked",      _bool),
-            ("is_marked_for_archiving",    "INTEGER",  "isMarkedForArchiving",          _bool),
-            ("creation_date",              "TEXT",     "creationDate",                  _date),
-            ("last_change_date",           "TEXT",     "lastChangeDate",                _date),
-            ("created_by_user",            "TEXT",     "createdByUser",                 _text),
-            ("correspondence_language",    "TEXT",     "correspondenceLanguage",        _text),
+            ("business_partner",           "VARCHAR(20)",     "businessPartner",              _text),
+            ("customer",                   "VARCHAR(20)",     "customer",                     _text),
+            ("business_partner_category",  "VARCHAR(1)",      "businessPartnerCategory",      _text),
+            ("business_partner_full_name", "VARCHAR(80)",     "businessPartnerFullName",      _text),
+            ("business_partner_name",      "VARCHAR(40)",     "businessPartnerName",          _text),
+            ("organization_bp_name1",      "VARCHAR(40)",     "organizationBpName1",          _text),
+            ("organization_bp_name2",      "VARCHAR(40)",     "organizationBpName2",          _text),
+            ("first_name",                 "VARCHAR(40)",     "firstName",                    _text),
+            ("last_name",                  "VARCHAR(40)",     "lastName",                     _text),
+            ("industry",                   "VARCHAR(4)",      "industry",                     _text),
+            ("business_partner_grouping",  "VARCHAR(4)",      "businessPartnerGrouping",      _text),
+            ("is_blocked",                 "BOOLEAN",         "businessPartnerIsBlocked",     _bool),
+            ("is_marked_for_archiving",    "BOOLEAN",         "isMarkedForArchiving",         _bool),
+            ("creation_date",              "DATE",            "creationDate",                 _date),
+            ("last_change_date",           "DATE",            "lastChangeDate",               _date),
+            ("created_by_user",            "VARCHAR(12)",     "createdByUser",                _text),
+            ("correspondence_language",    "VARCHAR(1)",      "correspondenceLanguage",       _text),
         ],
     },
 
@@ -334,21 +348,21 @@ SCHEMAS: dict[str, Any] = {
         "folder": "business_partner_addresses",
         "pk": ["business_partner", "address_id"],
         "cols": [
-            ("business_partner",           "TEXT",  "businessPartner",            _text),
-            ("address_id",                 "TEXT",  "addressId",                  _text),
-            ("address_uuid",               "TEXT",  "addressUuid",                _text),
-            ("address_time_zone",          "TEXT",  "addressTimeZone",            _text),
-            ("city_name",                  "TEXT",  "cityName",                   _text),
-            ("country",                    "TEXT",  "country",                    _text),
-            ("region",                     "TEXT",  "region",                     _text),
-            ("postal_code",                "TEXT",  "postalCode",                 _text),
-            ("street_name",                "TEXT",  "streetName",                 _text),
-            ("po_box",                     "TEXT",  "poBox",                      _text),
-            ("po_box_postal_code",         "TEXT",  "poBoxPostalCode",            _text),
-            ("tax_jurisdiction",           "TEXT",  "taxJurisdiction",            _text),
-            ("transport_zone",             "TEXT",  "transportZone",              _text),
-            ("validity_start_date",        "TEXT",  "validityStartDate",          _date),
-            ("validity_end_date",          "TEXT",  "validityEndDate",            _date),
+            ("business_partner",           "VARCHAR(20)",  "businessPartner",            _text),
+            ("address_id",                 "VARCHAR(10)",  "addressId",                  _text),
+            ("address_uuid",               "VARCHAR(50)",  "addressUuid",                _text),
+            ("address_time_zone",          "VARCHAR(6)",   "addressTimeZone",            _text),
+            ("city_name",                  "VARCHAR(40)",  "cityName",                   _text),
+            ("country",                    "VARCHAR(3)",   "country",                    _text),
+            ("region",                     "VARCHAR(3)",   "region",                     _text),
+            ("postal_code",                "VARCHAR(10)",  "postalCode",                 _text),
+            ("street_name",                "VARCHAR(40)",  "streetName",                 _text),
+            ("po_box",                     "VARCHAR(10)",  "poBox",                      _text),
+            ("po_box_postal_code",         "VARCHAR(10)",  "poBoxPostalCode",            _text),
+            ("tax_jurisdiction",           "VARCHAR(15)",  "taxJurisdiction",            _text),
+            ("transport_zone",             "VARCHAR(10)",  "transportZone",              _text),
+            ("validity_start_date",        "DATE",         "validityStartDate",          _date),
+            ("validity_end_date",          "DATE",         "validityEndDate",            _date),
         ],
     },
 
@@ -356,15 +370,15 @@ SCHEMAS: dict[str, Any] = {
         "folder": "customer_company_assignments",
         "pk": ["customer", "company_code"],
         "cols": [
-            ("customer",                   "TEXT",     "customer",                  _text),
-            ("company_code",               "TEXT",     "companyCode",               _text),
-            ("reconciliation_account",     "TEXT",     "reconciliationAccount",     _text),
-            ("payment_terms",              "TEXT",     "paymentTerms",              _text),
-            ("payment_methods_list",       "TEXT",     "paymentMethodsList",        _text),
-            ("payment_blocking_reason",    "TEXT",     "paymentBlockingReason",     _text),
-            ("accounting_clerk",           "TEXT",     "accountingClerk",           _text),
-            ("customer_account_group",     "TEXT",     "customerAccountGroup",      _text),
-            ("deletion_indicator",         "INTEGER",  "deletionIndicator",         _bool),
+            ("customer",                   "VARCHAR(20)",     "customer",                  _text),
+            ("company_code",               "VARCHAR(4)",      "companyCode",               _text),
+            ("reconciliation_account",     "VARCHAR(10)",     "reconciliationAccount",     _text),
+            ("payment_terms",              "VARCHAR(4)",      "paymentTerms",              _text),
+            ("payment_methods_list",       "VARCHAR(25)",     "paymentMethodsList",        _text),
+            ("payment_blocking_reason",    "VARCHAR(2)",      "paymentBlockingReason",     _text),
+            ("accounting_clerk",           "VARCHAR(3)",      "accountingClerk",           _text),
+            ("customer_account_group",     "VARCHAR(4)",      "customerAccountGroup",      _text),
+            ("deletion_indicator",         "BOOLEAN",         "deletionIndicator",         _bool),
         ],
     },
 
@@ -372,24 +386,24 @@ SCHEMAS: dict[str, Any] = {
         "folder": "customer_sales_area_assignments",
         "pk": ["customer", "sales_organization", "distribution_channel", "division"],
         "cols": [
-            ("customer",                       "TEXT",     "customer",                      _text),
-            ("sales_organization",             "TEXT",     "salesOrganization",             _text),
-            ("distribution_channel",           "TEXT",     "distributionChannel",           _text),
-            ("division",                       "TEXT",     "division",                      _text),
-            ("currency",                       "TEXT",     "currency",                      _text),
-            ("customer_payment_terms",         "TEXT",     "customerPaymentTerms",          _text),
-            ("delivery_priority",              "TEXT",     "deliveryPriority",              _text),
-            ("shipping_condition",             "TEXT",     "shippingCondition",             _text),
-            ("incoterms_classification",       "TEXT",     "incotermsClassification",       _text),
-            ("incoterms_location1",            "TEXT",     "incotermsLocation1",            _text),
-            ("credit_control_area",            "TEXT",     "creditControlArea",             _text),
-            ("sales_district",                 "TEXT",     "salesDistrict",                 _text),
-            ("sales_group",                    "TEXT",     "salesGroup",                    _text),
-            ("sales_office",                   "TEXT",     "salesOffice",                   _text),
-            ("supplying_plant",                "TEXT",     "supplyingPlant",                _text),
-            ("billing_is_blocked",             "TEXT",     "billingIsBlockedForCustomer",   _text),
-            ("complete_delivery_is_defined",   "INTEGER",  "completeDeliveryIsDefined",     _bool),
-            ("unlimited_overdelivery_allowed", "INTEGER",  "slsUnlmtdOvrdelivIsAllwd",      _bool),
+            ("customer",                       "VARCHAR(20)",     "customer",                      _text),
+            ("sales_organization",             "VARCHAR(4)",      "salesOrganization",             _text),
+            ("distribution_channel",           "VARCHAR(2)",      "distributionChannel",           _text),
+            ("division",                       "VARCHAR(2)",      "division",                      _text),
+            ("currency",                       "VARCHAR(3)",      "currency",                      _text),
+            ("customer_payment_terms",         "VARCHAR(4)",      "customerPaymentTerms",          _text),
+            ("delivery_priority",              "VARCHAR(2)",      "deliveryPriority",              _text),
+            ("shipping_condition",             "VARCHAR(2)",      "shippingCondition",             _text),
+            ("incoterms_classification",       "VARCHAR(3)",      "incotermsClassification",       _text),
+            ("incoterms_location1",            "VARCHAR(27)",     "incotermsLocation1",            _text),
+            ("credit_control_area",            "VARCHAR(4)",      "creditControlArea",             _text),
+            ("sales_district",                 "VARCHAR(3)",      "salesDistrict",                 _text),
+            ("sales_group",                    "VARCHAR(3)",      "salesGroup",                    _text),
+            ("sales_office",                   "VARCHAR(4)",      "salesOffice",                   _text),
+            ("supplying_plant",                "VARCHAR(4)",      "supplyingPlant",                _text),
+            ("billing_is_blocked",             "VARCHAR(2)",      "billingIsBlockedForCustomer",   _text),
+            ("complete_delivery_is_defined",   "BOOLEAN",         "completeDeliveryIsDefined",     _bool),
+            ("unlimited_overdelivery_allowed", "BOOLEAN",         "slsUnlmtdOvrdelivIsAllwd",      _bool),
         ],
     },
 
@@ -397,23 +411,23 @@ SCHEMAS: dict[str, Any] = {
         "folder": "products",
         "pk": ["product"],
         "cols": [
-            ("product",                        "TEXT",     "product",                       _text),
-            ("product_type",                   "TEXT",     "productType",                   _text),
-            ("product_old_id",                 "TEXT",     "productOldId",                  _text),
-            ("base_unit",                      "TEXT",     "baseUnit",                      _text),
-            ("division",                       "TEXT",     "division",                      _text),
-            ("industry_sector",                "TEXT",     "industrySector",                _text),
-            ("product_group",                  "TEXT",     "productGroup",                  _text),
-            ("gross_weight",                   "REAL",     "grossWeight",                   _real),
-            ("net_weight",                     "REAL",     "netWeight",                     _real),
-            ("weight_unit",                    "TEXT",     "weightUnit",                    _text),
-            ("cross_plant_status",             "TEXT",     "crossPlantStatus",              _text),
-            ("cross_plant_status_valid_date",  "TEXT",     "crossPlantStatusValidityDate",  _date),
-            ("is_marked_for_deletion",         "INTEGER",  "isMarkedForDeletion",           _bool),
-            ("creation_date",                  "TEXT",     "creationDate",                  _date),
-            ("created_by_user",                "TEXT",     "createdByUser",                 _text),
-            ("last_change_date",               "TEXT",     "lastChangeDate",                _date),
-            ("last_change_datetime",           "TEXT",     "lastChangeDateTime",            _datetime),
+            ("product",                        "VARCHAR(40)",     "product",                       _text),
+            ("product_type",                   "VARCHAR(4)",      "productType",                   _text),
+            ("product_old_id",                 "VARCHAR(18)",     "productOldId",                  _text),
+            ("base_unit",                      "VARCHAR(3)",      "baseUnit",                      _text),
+            ("division",                       "VARCHAR(2)",      "division",                      _text),
+            ("industry_sector",                "VARCHAR(2)",      "industrySector",                _text),
+            ("product_group",                  "VARCHAR(9)",      "productGroup",                  _text),
+            ("gross_weight",                   "NUMERIC(13,3)",   "grossWeight",                   _real),
+            ("net_weight",                     "NUMERIC(13,3)",   "netWeight",                     _real),
+            ("weight_unit",                    "VARCHAR(3)",      "weightUnit",                    _text),
+            ("cross_plant_status",             "VARCHAR(1)",      "crossPlantStatus",              _text),
+            ("cross_plant_status_valid_date",  "DATE",            "crossPlantStatusValidityDate",  _date),
+            ("is_marked_for_deletion",         "BOOLEAN",         "isMarkedForDeletion",           _bool),
+            ("creation_date",                  "DATE",            "creationDate",                  _date),
+            ("created_by_user",                "VARCHAR(12)",     "createdByUser",                 _text),
+            ("last_change_date",               "DATE",            "lastChangeDate",                _date),
+            ("last_change_datetime",           "VARCHAR(30)",     "lastChangeDateTime",            _datetime),
         ],
     },
 
@@ -421,9 +435,9 @@ SCHEMAS: dict[str, Any] = {
         "folder": "product_descriptions",
         "pk": ["product", "language"],
         "cols": [
-            ("product",              "TEXT",  "product",             _text),
-            ("language",             "TEXT",  "language",            _text),
-            ("product_description",  "TEXT",  "productDescription",  _text),
+            ("product",              "VARCHAR(40)",  "product",             _text),
+            ("language",             "VARCHAR(1)",   "language",            _text),
+            ("product_description",  "TEXT",         "productDescription",  _text),
         ],
     },
 
@@ -431,20 +445,20 @@ SCHEMAS: dict[str, Any] = {
         "folder": "plants",
         "pk": ["plant"],
         "cols": [
-            ("plant",                               "TEXT",     "plant",                            _text),
-            ("plant_name",                          "TEXT",     "plantName",                        _text),
-            ("valuation_area",                      "TEXT",     "valuationArea",                    _text),
-            ("plant_customer",                      "TEXT",     "plantCustomer",                    _text),
-            ("plant_supplier",                      "TEXT",     "plantSupplier",                    _text),
-            ("factory_calendar",                    "TEXT",     "factoryCalendar",                  _text),
-            ("default_purchasing_organization",     "TEXT",     "defaultPurchasingOrganization",    _text),
-            ("sales_organization",                  "TEXT",     "salesOrganization",                _text),
-            ("address_id",                          "TEXT",     "addressId",                        _text),
-            ("plant_category",                      "TEXT",     "plantCategory",                    _text),
-            ("distribution_channel",                "TEXT",     "distributionChannel",              _text),
-            ("division",                            "TEXT",     "division",                         _text),
-            ("language",                            "TEXT",     "language",                         _text),
-            ("is_marked_for_archiving",             "INTEGER",  "isMarkedForArchiving",             _bool),
+            ("plant",                               "VARCHAR(4)",      "plant",                            _text),
+            ("plant_name",                          "VARCHAR(30)",     "plantName",                        _text),
+            ("valuation_area",                      "VARCHAR(4)",      "valuationArea",                    _text),
+            ("plant_customer",                      "VARCHAR(20)",     "plantCustomer",                    _text),
+            ("plant_supplier",                      "VARCHAR(20)",     "plantSupplier",                    _text),
+            ("factory_calendar",                    "VARCHAR(2)",      "factoryCalendar",                  _text),
+            ("default_purchasing_organization",     "VARCHAR(4)",      "defaultPurchasingOrganization",    _text),
+            ("sales_organization",                  "VARCHAR(4)",      "salesOrganization",                _text),
+            ("address_id",                          "VARCHAR(10)",     "addressId",                        _text),
+            ("plant_category",                      "VARCHAR(1)",      "plantCategory",                    _text),
+            ("distribution_channel",                "VARCHAR(2)",      "distributionChannel",              _text),
+            ("division",                            "VARCHAR(2)",      "division",                         _text),
+            ("language",                            "VARCHAR(1)",      "language",                         _text),
+            ("is_marked_for_archiving",             "BOOLEAN",         "isMarkedForArchiving",             _bool),
         ],
     },
 
@@ -452,15 +466,15 @@ SCHEMAS: dict[str, Any] = {
         "folder": "product_plants",
         "pk": ["product", "plant"],
         "cols": [
-            ("product",                        "TEXT",  "product",                       _text),
-            ("plant",                          "TEXT",  "plant",                         _text),
-            ("country_of_origin",              "TEXT",  "countryOfOrigin",               _text),
-            ("region_of_origin",               "TEXT",  "regionOfOrigin",                _text),
-            ("mrp_type",                       "TEXT",  "mrpType",                       _text),
-            ("availability_check_type",        "TEXT",  "availabilityCheckType",         _text),
-            ("fiscal_year_variant",            "TEXT",  "fiscalYearVariant",             _text),
-            ("profit_center",                  "TEXT",  "profitCenter",                  _text),
-            ("production_invtry_managed_loc",  "TEXT",  "productionInvtryManagedLoc",    _text),
+            ("product",                        "VARCHAR(40)",  "product",                       _text),
+            ("plant",                          "VARCHAR(4)",   "plant",                         _text),
+            ("country_of_origin",              "VARCHAR(3)",   "countryOfOrigin",               _text),
+            ("region_of_origin",               "VARCHAR(3)",   "regionOfOrigin",                _text),
+            ("mrp_type",                       "VARCHAR(2)",   "mrpType",                       _text),
+            ("availability_check_type",        "VARCHAR(2)",   "availabilityCheckType",         _text),
+            ("fiscal_year_variant",            "VARCHAR(2)",   "fiscalYearVariant",             _text),
+            ("profit_center",                  "VARCHAR(10)",  "profitCenter",                  _text),
+            ("production_invtry_managed_loc",  "VARCHAR(4)",   "productionInvtryManagedLoc",    _text),
         ],
     },
 
@@ -468,11 +482,11 @@ SCHEMAS: dict[str, Any] = {
         "folder": "product_storage_locations",
         "pk": ["product", "plant", "storage_location"],
         "cols": [
-            ("product",                        "TEXT",  "product",                          _text),
-            ("plant",                          "TEXT",  "plant",                            _text),
-            ("storage_location",               "TEXT",  "storageLocation",                  _text),
-            ("physical_inventory_block",       "TEXT",  "physicalInventoryBlockInd",        _text),
-            ("date_last_posted_unrestricted",  "TEXT",  "dateOfLastPostedCntUnRstrcdStk",   _date),
+            ("product",                        "VARCHAR(40)",  "product",                          _text),
+            ("plant",                          "VARCHAR(4)",   "plant",                            _text),
+            ("storage_location",               "VARCHAR(4)",   "storageLocation",                  _text),
+            ("physical_inventory_block",       "VARCHAR(1)",   "physicalInventoryBlockInd",        _text),
+            ("date_last_posted_unrestricted",  "DATE",         "dateOfLastPostedCntUnRstrcdStk",   _date),
         ],
     },
 }
@@ -491,26 +505,25 @@ INDEXES = [
     ("sales_order_items",             ["sales_order"]),
     ("sales_order_items",             ["material"]),
     ("sales_order_schedule_lines",    ["sales_order", "sales_order_item"]),
-    ("outbound_delivery_items",       ["reference_sd_document"]),          # → sales_order
+    ("outbound_delivery_items",       ["reference_sd_document"]),
     ("outbound_delivery_items",       ["delivery_document"]),
     ("outbound_delivery_items",       ["plant"]),
     ("outbound_delivery_headers",     ["shipping_point"]),
     ("billing_document_headers",      ["sold_to_party"]),
-    ("billing_document_headers",      ["accounting_document"]),            # → journal / payment
+    ("billing_document_headers",      ["accounting_document"]),
     ("billing_document_headers",      ["billing_doc_is_cancelled"]),
     ("billing_document_headers",      ["billing_document_date"]),
     ("billing_document_items",        ["billing_document"]),
-    ("billing_document_items",        ["reference_sd_document"]),          # → delivery_document
+    ("billing_document_items",        ["reference_sd_document"]),
     ("billing_document_items",        ["material"]),
     ("billing_document_cancellations",["billing_doc_is_cancelled"]),
     ("journal_entry_items_ar",        ["accounting_document"]),
-    ("journal_entry_items_ar",        ["reference_document"]),             # → billing_document
+    ("journal_entry_items_ar",        ["reference_document"]),
     ("journal_entry_items_ar",        ["customer"]),
     ("journal_entry_items_ar",        ["posting_date"]),
-    ("payments_ar",                   ["clearing_accounting_document"]),   # → billing acct doc (PRIMARY)
+    ("payments_ar",                   ["clearing_accounting_document"]),
     ("payments_ar",                   ["customer"]),
     ("payments_ar",                   ["clearing_date"]),
-    # Supporting entities
     ("business_partners",             ["customer"]),
     ("business_partner_addresses",    ["business_partner"]),
     ("business_partner_addresses",    ["region"]),
@@ -575,24 +588,33 @@ def build_create_table(table: str, schema: dict) -> str:
 # Main ingest routine
 # ---------------------------------------------------------------------------
 
-def ingest(data_dir: Path, db_path: Path) -> None:
-    log.info("Data directory : %s", data_dir)
-    log.info("SQLite database: %s", db_path)
+def ingest(data_dir: Path, db_name: str) -> None:
+    log.info("Data directory  : %s", data_dir)
+    log.info("PostgreSQL database: %s (host=%s, port=%d, user=%s)", 
+             db_name, DB_HOST, DB_PORT, DB_USER)
 
     if not data_dir.exists():
         log.error("Data directory not found: %s", data_dir)
         sys.exit(1)
 
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-
-    con = sqlite3.connect(db_path)
-    con.execute("PRAGMA journal_mode=WAL")
-    con.execute("PRAGMA synchronous=NORMAL")
-    con.execute("PRAGMA foreign_keys=ON")
+    # Connect to PostgreSQL
+    try:
+        con = psycopg2.connect(
+            host=DB_HOST,
+            port=DB_PORT,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            database=db_name,
+        )
+        log.info("Connected to PostgreSQL database: %s", db_name)
+    except psycopg2.Error as e:
+        log.error("Failed to connect to PostgreSQL: %s", e)
+        sys.exit(1)
 
     totals = {}
 
-    with con:
+    try:
+        cur = con.cursor()
         for table, schema in SCHEMAS.items():
             folder   = schema["folder"]
             col_defs = schema["cols"]
@@ -600,7 +622,8 @@ def ingest(data_dir: Path, db_path: Path) -> None:
 
             # Create table
             ddl = build_create_table(table, schema)
-            con.execute(ddl)
+            cur.execute(ddl)
+            con.commit()
             log.info("Table %-40s created/verified", table)
 
             # Load records
@@ -622,14 +645,23 @@ def ingest(data_dir: Path, db_path: Path) -> None:
                 seen_pks.add(pk_val)
                 unique_rows.append(row)
 
-            # INSERT OR REPLACE for idempotency (re-running ingest is safe)
-            placeholders = ", ".join(["?"] * len(col_names))
+            # INSERT with ON CONFLICT for idempotency (re-running ingest is safe)
+            placeholders = ", ".join(["%s"] * len(col_names))
             col_list     = ", ".join(col_names)
+            pk_clause    = ", ".join(pk_cols)
             sql = (
-                f"INSERT OR REPLACE INTO {table} ({col_list}) "
-                f"VALUES ({placeholders})"
+                f"INSERT INTO {table} ({col_list}) VALUES ({placeholders}) "
+                f"ON CONFLICT ({pk_clause}) DO UPDATE SET "
+                f"{', '.join(f'{col}=EXCLUDED.{col}' for col in col_names if col not in pk_cols)}"
             )
-            con.executemany(sql, unique_rows)
+            
+            for row in unique_rows:
+                try:
+                    cur.execute(sql, row)
+                except psycopg2.Error as e:
+                    log.warning("Error inserting row into %s: %s", table, e)
+            
+            con.commit()
 
             skipped = len(raw_records) - len(unique_rows)
             log.info(
@@ -643,12 +675,19 @@ def ingest(data_dir: Path, db_path: Path) -> None:
         for table, cols in INDEXES:
             idx_name = f"idx_{table}__{'_'.join(cols)}"
             col_list = ", ".join(cols)
-            con.execute(
-                f"CREATE INDEX IF NOT EXISTS {idx_name} ON {table} ({col_list})"
-            )
+            try:
+                cur.execute(
+                    f"CREATE INDEX IF NOT EXISTS {idx_name} ON {table} ({col_list})"
+                )
+            except psycopg2.Error as e:
+                log.warning("Error creating index %s: %s", idx_name, e)
+        
+        con.commit()
         log.info("Indexes created.")
 
-    con.close()
+    finally:
+        cur.close()
+        con.close()
 
     # ---------------------------------------------------------------------------
     # Summary report
@@ -672,7 +711,15 @@ def ingest(data_dir: Path, db_path: Path) -> None:
     print("\n  JOIN PATH VALIDATION")
     print("  " + "-" * 57)
 
-    con = sqlite3.connect(db_path)
+    con = psycopg2.connect(
+        host=DB_HOST,
+        port=DB_PORT,
+        user=DB_USER,
+        password=DB_PASSWORD,
+        database=db_name,
+    )
+    cur = con.cursor()
+    
     checks = [
         (
             "SO → Delivery (86/86 expected)",
@@ -718,16 +765,23 @@ def ingest(data_dir: Path, db_path: Path) -> None:
     ]
 
     all_ok = True
-    for label, sql in checks:
-        result = con.execute(sql).fetchone()[0]
-        status = "OK" if result > 0 else "FAIL"
-        if status == "FAIL":
+    for label, sql_query in checks:
+        try:
+            cur.execute(sql_query)
+            result = cur.fetchone()[0]
+            status = "OK" if result > 0 else "FAIL"
+            if status == "FAIL":
+                all_ok = False
+            print(f"  [{status}] {label}: {result}")
+        except psycopg2.Error as e:
+            print(f"  [FAIL] {label}: Error - {e}")
             all_ok = False
-        print(f"  [{status}] {label}: {result}")
 
+    cur.close()
     con.close()
+    
     print("=" * 60)
-    print(f"\n  Database written to: {db_path.resolve()}")
+    print(f"\n  Database populated: {db_name}")
     print(f"  All join paths OK : {all_ok}")
     print()
 
@@ -738,7 +792,7 @@ def ingest(data_dir: Path, db_path: Path) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Ingest SAP O2C JSONL dataset into SQLite"
+        description="Ingest SAP O2C JSONL dataset into PostgreSQL"
     )
     parser.add_argument(
         "--data-dir",
@@ -746,13 +800,13 @@ if __name__ == "__main__":
         help="Path to the extracted dataset folder (default: ./sap-order-to-cash-dataset/sap-o2c-data)",
     )
     parser.add_argument(
-        "--db-path",
-        default="./o2c.db",
-        help="Output SQLite database path (default: ./o2c.db)",
+        "--db-name",
+        default="dodgeai_o2c",
+        help="PostgreSQL database name (default: dodgeai_o2c). Database must exist.",
     )
     args = parser.parse_args()
 
     ingest(
         data_dir=Path(args.data_dir),
-        db_path=Path(args.db_path),
+        db_name=args.db_name,
     )

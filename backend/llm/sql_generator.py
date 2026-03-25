@@ -53,12 +53,58 @@ CRITICAL RULES (strictly enforced by validator):
   5. For joins, use EXACT strings from the query plan JSON.
   6. Apply all filters from the query plan.
   7. If aggregation is specified, use it in SELECT and include GROUP BY.
+  8. BOOLEAN columns (billing_doc_is_cancelled, is_blocked) use PostgreSQL syntax:
+     Write  = FALSE  or  = TRUE  (never = 0, = 1, = 'FALSE', or = 'TRUE').
 
 DON'T OVERTHINK: The query plan already has done the hard work (tables, joins, filters).
 Your job is just to convert it to valid SQL.
 
 {DB_SCHEMA}
 """
+
+
+def _normalize_boolean_literals(sql: str) -> str:
+    """
+    Normalize SQLite-style boolean integer comparisons to PostgreSQL boolean literals.
+
+    PostgreSQL stores BOOLEAN columns as true/false, not 0/1. The LLM (trained
+    on the SQLite schema) often generates:
+        billing_doc_is_cancelled = 0   → should be: billing_doc_is_cancelled = FALSE
+        billing_doc_is_cancelled = 1   → should be: billing_doc_is_cancelled = TRUE
+        billing_doc_is_cancelled = 'FALSE' → should be: billing_doc_is_cancelled = FALSE
+
+    This function rewrites those patterns so the SQL runs correctly on PostgreSQL.
+    """
+    # Boolean columns in the schema that are stored as BOOLEAN in PostgreSQL
+    BOOL_COLUMNS = [
+        "billing_doc_is_cancelled",
+        "is_blocked",
+    ]
+
+    for col in BOOL_COLUMNS:
+        # col = 0  →  col = FALSE
+        sql = re.sub(
+            rf"({re.escape(col)}\s*=\s*)0\b",
+            r"\g<1>FALSE",
+            sql,
+            flags=re.IGNORECASE,
+        )
+        # col = 1  →  col = TRUE
+        sql = re.sub(
+            rf"({re.escape(col)}\s*=\s*)1\b",
+            r"\g<1>TRUE",
+            sql,
+            flags=re.IGNORECASE,
+        )
+        # col = 'FALSE'  →  col = FALSE  (strip quotes)
+        sql = re.sub(
+            rf"({re.escape(col)}\s*=\s*)'(TRUE|FALSE)'",
+            r"\g<1>\2",
+            sql,
+            flags=re.IGNORECASE,
+        )
+
+    return sql
 
 
 def _extract_sql(text: str) -> str:
@@ -68,7 +114,10 @@ def _extract_sql(text: str) -> str:
     text = re.sub(r"^```(?:sql)?\s*\n?", "", text, flags=re.IGNORECASE)
     text = re.sub(r"\n?```\s*$", "", text)
     sql = text.strip()
-    
+
+    # Normalize boolean literals for PostgreSQL compatibility
+    sql = _normalize_boolean_literals(sql)
+
     # Detect truncation — SQL ending mid-keyword (incomplete clause)
     if sql and len(sql) > 50:
         # If query ends with incomplete clause indicators

@@ -188,7 +188,7 @@ Products → Description:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 FILTER RULES (apply these whenever the relevant table is in use):
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  - Active billing docs: {{"field": "billing_doc_is_cancelled", "operator": "=", "value": "0"}}
+  - Active billing docs: {{"field": "billing_doc_is_cancelled", "operator": "=", "value": false}}
   - Active orders: {{"field": "header_billing_block", "operator": "IS NULL", "value": null}}
   - Product description language: {{"field": "language", "operator": "=", "value": "EN"}}
   - Product category (use IN, NOT LIKE): {{"field": "product_hierarchy", "operator": "IN", "value": ["SKINCARE", "SKIN CARE"]}}
