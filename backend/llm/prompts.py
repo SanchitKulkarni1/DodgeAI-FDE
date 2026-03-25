@@ -66,9 +66,9 @@ FINANCIAL RANGES (for sanity-checking SQL results):
 # ---------------------------------------------------------------------------
 
 DB_SCHEMA = DATA_CONSTRAINTS + """
-DATABASE: SQLite  (o2c.db)
+DATABASE: PostgreSQL  (dodgeai_o2c)
 ALL amounts are REAL. ALL dates are TEXT in 'YYYY-MM-DD' format.
-Booleans are stored as INTEGER: 1 = true, 0 = false.
+Booleans are stored as BOOLEAN: use TRUE or FALSE.
 
 ========== CORE O2C FLOW ==========
 

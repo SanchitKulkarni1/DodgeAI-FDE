@@ -1,10 +1,10 @@
 """
-llm/sql_generator.py — Natural language + query plan → validated SQLite SQL.
+llm/sql_generator.py — Natural language + query plan → validated PostgreSQL SQL.
 
 generate_sql() uses the query plan from planner.py to produce a single
-SQLite SELECT statement. The output is:
+PostgreSQL SELECT statement. The output is:
   1. Extracted from the LLM response (strips markdown fences)
-  2. Syntax-validated against the live SQLite DB using EXPLAIN
+  2. Syntax-validated against the local SQLite DB using EXPLAIN (as proxy)
   3. Returned as a clean SQL string, or raises ValueError on bad SQL
 
 Key prompt constraints enforced:
@@ -29,9 +29,9 @@ log = logging.getLogger(__name__)
 _DB_PATH = "o2c.db"
 
 _SYSTEM = f"""\
-You are a SQLite SQL generator for an Order-to-Cash (O2C) database.
+You are a PostgreSQL SQL generator for an Order-to-Cash (O2C) database.
 
-Given a natural language question and a STRUCTURED QUERY PLAN (JSON), produce ONE valid SQLite
+Given a natural language question and a STRUCTURED QUERY PLAN (JSON), produce ONE valid PostgreSQL
 SELECT statement that answers the question.
 
 The query plan specifies:
@@ -84,21 +84,21 @@ def _normalize_boolean_literals(sql: str) -> str:
     for col in BOOL_COLUMNS:
         # col = 0  →  col = FALSE
         sql = re.sub(
-            rf"({re.escape(col)}\s*=\s*)0\b",
+            rf"({re.escape(col)}\s*(?:=|IS)\s*)0\b",
             r"\g<1>FALSE",
             sql,
             flags=re.IGNORECASE,
         )
         # col = 1  →  col = TRUE
         sql = re.sub(
-            rf"({re.escape(col)}\s*=\s*)1\b",
+            rf"({re.escape(col)}\s*(?:=|IS)\s*)1\b",
             r"\g<1>TRUE",
             sql,
             flags=re.IGNORECASE,
         )
         # col = 'FALSE'  →  col = FALSE  (strip quotes)
         sql = re.sub(
-            rf"({re.escape(col)}\s*=\s*)'(TRUE|FALSE)'",
+            rf"({re.escape(col)}\s*(?:=|IS)\s*)'(TRUE|FALSE)'",
             r"\g<1>\2",
             sql,
             flags=re.IGNORECASE,
@@ -166,14 +166,14 @@ def _validate_sql(sql: str) -> None:
 
 def generate_sql(query: str, query_plan: QueryPlan) -> str:
     """
-    Generate and validate a SQLite SELECT statement.
+    Generate and validate a PostgreSQL SELECT statement.
 
     Args:
         query:       The resolved natural language query.
         query_plan:  QueryPlan (Pydantic) from build_query_plan().
 
     Returns:
-        A validated SQLite SQL string.
+        A validated PostgreSQL SQL string.
 
     Raises:
         ValueError: If the generated SQL fails validation after retries.

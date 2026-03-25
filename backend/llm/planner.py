@@ -173,9 +173,21 @@ Billing Header → Payment (use clearing_accounting_document — NOT invoice_ref
   left_table="billing_document_headers", right_table="payments_ar"
   on="payments_ar.clearing_accounting_document = billing_document_headers.accounting_document"
 
-Billing Items → Customer:
-  left_table="billing_document_items", right_table="business_partners"
-  on="billing_document_items.sold_to_party = business_partners.customer"
+Billing Header → Customer:
+  left_table="billing_document_headers", right_table="business_partners"
+  on="billing_document_headers.sold_to_party = business_partners.customer"
+
+Sales Order → Customer:
+  left_table="sales_order_headers", right_table="business_partners"
+  on="sales_order_headers.sold_to_party = business_partners.customer"
+
+Payment → Customer:
+  left_table="payments_ar", right_table="business_partners"
+  on="payments_ar.customer = business_partners.customer"
+
+Sales Order Items → Product:
+  left_table="sales_order_items", right_table="products"
+  on="sales_order_items.material = products.product"
 
 Billing Items → Product:
   left_table="billing_document_items", right_table="products"
@@ -185,13 +197,21 @@ Products → Description:
   left_table="products", right_table="product_descriptions"
   on="products.product = product_descriptions.product"
 
+Sales Order Items → Plant:
+  left_table="sales_order_items", right_table="plants"
+  on="sales_order_items.production_plant = plants.plant"
+
+Outbound Delivery Items → Plant:
+  left_table="outbound_delivery_items", right_table="plants"
+  on="outbound_delivery_items.plant = plants.plant"
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 FILTER RULES (apply these whenever the relevant table is in use):
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   - Active billing docs: {{"field": "billing_doc_is_cancelled", "operator": "=", "value": false}}
   - Active orders: {{"field": "header_billing_block", "operator": "IS NULL", "value": null}}
   - Product description language: {{"field": "language", "operator": "=", "value": "EN"}}
-  - Product category (use IN, NOT LIKE): {{"field": "product_hierarchy", "operator": "IN", "value": ["SKINCARE", "SKIN CARE"]}}
+  - Product group (use IN, NOT LIKE): {{"field": "product_group", "operator": "IN", "value": ["ZFG1001", "ZPKG004"]}}
 
 AGGREGATION EXAMPLES:
   - Total revenue: "SUM(bdi.net_amount)"
