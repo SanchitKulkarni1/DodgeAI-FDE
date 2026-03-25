@@ -57,6 +57,11 @@ export const apiClient = {
         return response.data;
     },
     
+    async getGraphSample(limit: number = 50): Promise<{ nodes: GraphNode[], edges: GraphEdge[] }> {
+        const response = await axios.get(`${API_BASE_URL}/graph/sample`, { params: { limit } });
+        return response.data;
+    },
+    
     async expandNode(nodeId: string, nodeType: string): Promise<ExpandNodeResponse> {
         const response = await axios.post<ExpandNodeResponse>(
             `${API_BASE_URL}/graph/expand`,

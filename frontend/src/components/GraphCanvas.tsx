@@ -31,6 +31,8 @@ function getEntityColor(type: string): string {
 }
 
 interface GraphCanvasProps {
+    backgroundNodes?: GraphNode[];
+    backgroundEdges?: GraphEdge[];
     highlightNodes: GraphNode[];
     highlightEdges: GraphEdge[];
     expandedNodes?: GraphNode[];
@@ -41,6 +43,8 @@ interface GraphCanvasProps {
 }
 
 export const GraphCanvas: React.FC<GraphCanvasProps> = ({ 
+    backgroundNodes = [],
+    backgroundEdges = [],
     highlightNodes, 
     highlightEdges,
     expandedNodes = [],
@@ -57,6 +61,7 @@ export const GraphCanvas: React.FC<GraphCanvasProps> = ({
     const [hoverNode, setHoverNode] = useState<any | null>(null);
     const [selectedNode, setSelectedNode] = useState<any | null>(null);
     const [showOverlay, setShowOverlay] = useState(true);
+    const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
 
     // Set of highlighted node IDs for fast lookup
     const highlightNodeIds = useMemo(() => {
@@ -68,6 +73,36 @@ export const GraphCanvas: React.FC<GraphCanvasProps> = ({
 
 
 
+    // Semantic layout for base schema nodes - shows O2C flow
+    const getSemanticPosition = (nodeType: string): { x: number; y: number } => {
+        // Positions nodes to show the natural Order-to-Cash flow:
+        // Left: Customer → Center: Sales Order/Delivery/Product → Right: Billing → Payment/Journal Entry
+        const positions: Record<string, { x: number; y: number }> = {
+            // O2C Flow: Start
+            customer:          { x: -400, y: 0 },
+            
+            // O2C Flow: Order Phase
+            sales_order:       { x: -150, y: 0 },
+            
+            // O2C Flow: Fulfillment Phase (parallel)
+            delivery:          { x: 100, y: -100 },
+            product:           { x: 100, y: 100 },
+            plant:             { x: 100, y: 50 },
+            
+            // O2C Flow: Billing Phase
+            billing_document:  { x: 300, y: 0 },
+            
+            // O2C Flow: Settlement Phase (parallel)
+            journal_entry:     { x: 500, y: -80 },
+            payment:           { x: 500, y: 80 },
+            
+            // Supporting entities
+            address:           { x: -400, y: 250 },
+        };
+        
+        return positions[nodeType] || { x: 0, y: 0 };
+    };
+
     // Initial load of schema nodes & edges
     useEffect(() => {
         const fetchSchema = async () => {
@@ -77,13 +112,20 @@ export const GraphCanvas: React.FC<GraphCanvasProps> = ({
                     apiClient.getGraphEdges()
                 ]);
                 
-                const bNodes = nodesData.entity_types.map(t => ({
-                    id: t.type,
-                    label: t.label,
-                    color: t.color || getEntityColor(t.type),
-                    isBase: true,
-                    val: 10,
-                }));
+                // Apply semantic positions to base nodes for meaningful layout
+                const bNodes = nodesData.entity_types.map(t => {
+                    const pos = getSemanticPosition(t.type);
+                    return {
+                        id: t.type,
+                        label: t.label,
+                        color: t.color || getEntityColor(t.type),
+                        isBase: true,
+                        val: 10,
+                        // Pin nodes to their semantic positions (fx, fy disable physics forces)
+                        fx: pos.x,
+                        fy: pos.y,
+                    };
+                });
                 
                 const bEdges = edgesData.edges.map(e => ({
                     source: e.source_type,
@@ -119,6 +161,17 @@ export const GraphCanvas: React.FC<GraphCanvasProps> = ({
     const graphData = useMemo(() => {
         const colorLookup: Record<string, string> = baseNodes.reduce((acc: Record<string, string>, n: any) => ({ ...acc, [n.id]: n.color }), {});
 
+        // Background instance nodes (always dimmed)
+        const backgroundInstanceNodes = backgroundNodes.map(n => ({
+            ...n,
+            color: colorLookup[n.type] || getEntityColor(n.type),
+            val: 3,
+            isBase: false,
+            isExpanded: false,
+            isHighlighted: false,
+            isBackground: true,
+        }));
+
         // Instance nodes from query highlights
         const instanceNodes = highlightNodes.map(n => ({
             ...n,
@@ -127,6 +180,7 @@ export const GraphCanvas: React.FC<GraphCanvasProps> = ({
             isBase: false,
             isExpanded: false,
             isHighlighted: true,
+            isBackground: false,
         }));
 
         // Instance nodes from expansion
@@ -137,16 +191,33 @@ export const GraphCanvas: React.FC<GraphCanvasProps> = ({
             isBase: false,
             isExpanded: true,
             isHighlighted: true,
+            isBackground: false,
         }));
 
-        // Combine nodes based on showOverlay state:
-        // - Always show base schema nodes
-        // - Only show instance nodes if showOverlay is true
-        const allNodes = showOverlay 
-            ? [...baseNodes, ...instanceNodes, ...expandedInstanceNodes]
-            : [...baseNodes];
+        // Combine nodes: base + background + highlights + expanded
+        // Background always shown, highlights layered on top
+        const allNodes = [
+            ...baseNodes,
+            ...backgroundInstanceNodes,
+            ...(showOverlay ? [...instanceNodes, ...expandedInstanceNodes] : [])
+        ];
         
         const uniqueNodes = Array.from(new Map(allNodes.map(item => [item.id, item])).values());
+        
+        // Build set of valid node IDs for edge validation
+        const validNodeIds = new Set(uniqueNodes.map(n => String(n.id)));
+
+        // Background edges (dimmed)
+        const backgroundEdgeSet = new Set(backgroundEdges.map(e => `${e.source}-${e.target}`));
+        const backgroundEdgeObjs = Array.from(backgroundEdgeSet).map(key => {
+            const [source, target] = key.split('-');
+            return {
+                source,
+                target,
+                isHighlighted: false,
+                isBackground: true,
+            };
+        });
 
         // Edge highlights from query
         const instEdges = highlightEdges.map(e => ({
@@ -154,6 +225,7 @@ export const GraphCanvas: React.FC<GraphCanvasProps> = ({
             isBase: false,
             isExpanded: false,
             isHighlighted: true,
+            isBackground: false,
         }));
 
         // Edge highlights from expansion
@@ -162,15 +234,19 @@ export const GraphCanvas: React.FC<GraphCanvasProps> = ({
             isBase: false,
             isExpanded: true,
             isHighlighted: true,
+            isBackground: false,
         }));
 
-        // Only include instance edges if overlay is shown
-        const allEdges = showOverlay
-            ? [...baseEdges, ...instEdges, ...expandedInstEdges]
-            : [...baseEdges];
+        // Combine all edges: base + background + highlights + expanded
+        // FILTER: only include edges where both source and target nodes exist
+        const allEdges = [
+            ...baseEdges,
+            ...backgroundEdgeObjs,
+            ...(showOverlay ? [...instEdges, ...expandedInstEdges] : [])
+        ].filter(edge => validNodeIds.has(String(edge.source)) && validNodeIds.has(String(edge.target)));
         
         return { nodes: uniqueNodes, links: allEdges };
-    }, [baseNodes, baseEdges, highlightNodes, highlightEdges, expandedNodes, expandedEdges, showOverlay]);
+    }, [baseNodes, baseEdges, backgroundNodes, backgroundEdges, highlightNodes, highlightEdges, expandedNodes, expandedEdges, showOverlay]);
 
     // Custom node canvas painter
     const nodeCanvasObject = useCallback((node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
@@ -183,24 +259,31 @@ export const GraphCanvas: React.FC<GraphCanvasProps> = ({
         ctx.globalAlpha = alpha;
 
         // Glow for highlighted nodes
-        if (isHL) {
+        if (isHL && !node.isBackground) {
             ctx.shadowColor = node.color || '#60a5fa';
-            ctx.shadowBlur = 15;
+            ctx.shadowBlur = 20;  // Stronger glow for highlights
         }
 
         ctx.beginPath();
         ctx.arc(node.x!, node.y!, radius, 0, 2 * Math.PI);
-        ctx.fillStyle = node.color || '#60a5fa';
+        // Background nodes: darker (50% opacity), highlighted nodes: bright, others: medium
+        if (node.isBackground) {
+            ctx.fillStyle = `${node.color || '#60a5fa'}80`;  // 50% opacity for background
+        } else {
+            ctx.fillStyle = node.color || '#60a5fa';
+        }
         ctx.fill();
 
         // Reset shadow
         ctx.shadowBlur = 0;
 
-        // Label rendering
-        if (globalScale > 1.2 || isHL) {
+        // Label rendering: show labels for all instance nodes, base nodes only when zoomed, background hidden
+        const shouldShowLabel = !node.isBase && !node.isBackground || globalScale > 1.2;
+        if (shouldShowLabel && !node.isBackground) {
             const fontSize = Math.max(10 / globalScale, 6);
             ctx.font = `${fontSize}px "DM Mono", monospace`;
-            ctx.fillStyle = 'rgba(255,255,255,0.85)';
+            // Labels: dark text for highlights, dimmer for others, hidden for background
+            ctx.fillStyle = isHL ? 'rgba(0,0,0,0.95)' : node.isBase ? 'rgba(100,100,100,0.4)' : 'rgba(60,66,72,0.75)';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'top';
             ctx.fillText(label, node.x!, node.y! + radius + 10 / globalScale);
@@ -211,9 +294,13 @@ export const GraphCanvas: React.FC<GraphCanvasProps> = ({
 
     const handleCanvasNodeClick = useCallback((node: any) => {
         if (node.isBase) return;
+        console.log('Node clicked:', node.id, 'isExpanding:', isExpanding);
         setSelectedNode(node);
         if (!isExpanding && onNodeClick) {
+            console.log('Triggering expansion for:', node.id);
             onNodeClick(node);
+        } else if (isExpanding) {
+            console.log('Expansion already in progress, blocking click');
         }
     }, [isExpanding, onNodeClick]);
 
@@ -268,14 +355,14 @@ export const GraphCanvas: React.FC<GraphCanvasProps> = ({
     };
 
     return (
-        <div ref={containerRef} className="w-full h-full relative" style={{ background: '#0d0f14' }}>
+        <div ref={containerRef} className="w-full h-full relative" style={{ background: '#ffffff' }}>
             {dimensions.width > 0 && (
                 <ForceGraph2D
                     ref={fgRef}
                     width={dimensions.width}
                     height={dimensions.height}
                     graphData={graphData}
-                    backgroundColor="#0d0f14"
+                    backgroundColor="#ffffff"
                     nodeCanvasObject={nodeCanvasObject}
                     nodePointerAreaPaint={(node: any, color: string, ctx: CanvasRenderingContext2D) => {
                         const radius = node.isHighlighted ? 10 : node.isBase ? 5 : 7;
@@ -284,40 +371,67 @@ export const GraphCanvas: React.FC<GraphCanvasProps> = ({
                         ctx.fillStyle = color;
                         ctx.fill();
                     }}
-                    linkColor={(link: any) => link.isHighlighted ? 'rgba(96,165,250,0.7)' : 'rgba(147,197,253,0.08)'}
-                    linkWidth={(link: any) => link.isHighlighted ? 2 : 0.5}
-                    linkDirectionalParticles={(link: any) => link.isHighlighted ? 4 : 0}
+                    linkColor={(link: any) => {
+                        if (link.isHighlighted) return 'rgba(59,130,246,1)';  // Bold bright blue for highlights
+                        if (link.isBackground) return 'rgba(150,150,150,0.3)';  // Darker for background (0.3 opacity)
+                        return 'rgba(200,200,200,0.15)';  // Regular faint for base/other
+                    }}
+                    linkWidth={(link: any) => {
+                        if (link.isHighlighted) return 3.5;  // Bolder highlights
+                        if (link.isBackground) return 0.8;  // More visible background edges
+                        return 0.8;
+                    }}
+                    linkDirectionalParticles={(link: any) => link.isHighlighted ? 6 : 0}  // More particles for highlights
                     linkDirectionalParticleWidth={2}
                     linkDirectionalParticleSpeed={0.006}
-                    onNodeHover={(node: any) => setHoverNode(node)}
+                    onNodeHover={(node: any) => {
+                        setHoverNode(node);
+                        if (node && containerRef.current) {
+                            const rect = containerRef.current.getBoundingClientRect();
+                            const nodeScreenX = node.x ? (node.x + dimensions.width / 2) : dimensions.width / 2;
+                            const nodeScreenY = node.y ? (node.y + dimensions.height / 2) : dimensions.height / 2;
+                            const x = nodeScreenX < 190 ? nodeScreenX + 150 : nodeScreenX - 350;
+                            const y = nodeScreenY < 100 ? nodeScreenY + 80 : nodeScreenY - 100;
+                            setTooltipPos({ x: Math.max(0, Math.min(x, dimensions.width - 280)), y: Math.max(0, Math.min(y, dimensions.height - 150)) });
+                        }
+                    }}
                     onNodeClick={handleCanvasNodeClick}
                     onBackgroundClick={() => setSelectedNode(null)}
-                    d3AlphaDecay={0.02}
-                    d3VelocityDecay={0.3}
+                    d3AlphaDecay={0.025}
+                    d3VelocityDecay={0.45}
                     warmupTicks={100}
                     cooldownTicks={200}
                     nodeRelSize={5}
                     enableNodeDrag={true}
                     enableZoomInteraction={true}
+                    d3Force="charge" d3ForceStrength={-120}
+                    linkDistance={200}
+                    distanceMax={500}
                 />
             )}
             
             {/* Floating Hover Tooltip */}
             {hoverNode && !selectedNode && (
-                <div className="absolute top-4 left-4 bg-black/60 backdrop-blur-md border border-white/10 rounded-xl p-3 text-xs pointer-events-none z-10 max-w-xs">
+                <div 
+                    className="absolute bg-white border border-gray-200 rounded-lg p-3 text-xs pointer-events-none z-20 max-w-xs shadow-lg"
+                    style={{
+                        left: `${tooltipPos.x}px`,
+                        top: `${tooltipPos.y}px`,
+                    }}
+                >
                     <div className="flex items-center gap-2 mb-1.5">
                         <span 
-                            className="px-2 py-0.5 rounded-full text-[10px] font-medium uppercase tracking-wider"
-                            style={{ backgroundColor: (hoverNode.color || '#94a3b8') + '25', color: hoverNode.color || '#94a3b8' }}
+                            className="px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider"
+                            style={{ backgroundColor: (hoverNode.color || '#94a3b8') + '20', color: hoverNode.color || '#94a3b8' }}
                         >
                             {hoverNode.isBase ? 'Entity Type' : hoverNode.type?.replace('_', ' ') || 'Node'}
                         </span>
                     </div>
-                    <h3 className="font-bold text-white text-sm mb-1">{hoverNode.label || hoverNode.id}</h3>
+                    <h3 className="font-bold text-gray-900 text-sm mb-1">{hoverNode.label || hoverNode.id}</h3>
                     {!hoverNode.isBase && (
                         <>
-                            <p className="text-white/50 font-mono text-[10px] break-all">ID: {hoverNode.id}</p>
-                            <p className="text-white/30 text-[10px] mt-1.5 italic">Click to expand</p>
+                            <p className="text-gray-600 font-mono text-[10px] break-all">ID: {hoverNode.id}</p>
+                            <p className="text-gray-500 text-[10px] mt-1.5 italic">Click to expand</p>
                         </>
                     )}
                 </div>
@@ -325,7 +439,7 @@ export const GraphCanvas: React.FC<GraphCanvasProps> = ({
 
             {/* Floating Metadata Card on Click */}
             {selectedNode && (
-                <div className="absolute top-6 right-6 w-[340px] max-h-[85vh] bg-black/80 backdrop-blur-xl border border-white/15 rounded-xl p-4 text-xs z-30 shadow-2xl shadow-black/50 overflow-y-auto">
+                <div className="absolute top-6 right-6 w-[340px] max-h-[85vh] bg-white border border-gray-200 rounded-lg p-4 text-xs z-30 shadow-lg overflow-y-auto">
                     {/* Header with badge and close */}
                     <div className="flex items-center justify-between mb-4">
                         <span 
@@ -336,39 +450,39 @@ export const GraphCanvas: React.FC<GraphCanvasProps> = ({
                         </span>
                         <button 
                             onClick={() => setSelectedNode(null)}
-                            className="text-white/30 hover:text-white/70 transition-colors flex-shrink-0"
+                            className="text-gray-400 hover:text-gray-600 transition-colors flex-shrink-0"
                         >
                             <X size={16} />
                         </button>
                     </div>
 
                     {/* Title */}
-                    <h3 className="font-bold text-white text-sm mb-4 break-all">{selectedNode.label || selectedNode.id}</h3>
+                    <h3 className="font-bold text-gray-900 text-sm mb-4 break-all">{selectedNode.label || selectedNode.id}</h3>
 
                     {/* Metadata fields */}
                     {selectedNode.isBase ? (
-                        <div className="text-white/60 italic text-center py-4">
+                        <div className="text-gray-600 italic text-center py-4">
                             <p>Base schema node</p>
-                            <p className="text-[10px] text-white/40 mt-1">Click instance nodes for details</p>
+                            <p className="text-[10px] text-gray-500 mt-1">Click instance nodes for details</p>
                         </div>
                     ) : (
                         <>
                             <div className="space-y-2 font-mono text-[11px] mb-4">
                                 {getNodeMetadata(selectedNode).map(([key, val], idx) => (
-                                    <div key={idx} className="flex justify-between gap-3 pb-2 border-b border-white/5 last:border-0">
-                                        <span className="text-white/40 flex-shrink-0 capitalize">{key}</span>
-                                        <span className="text-white/70 text-right break-all flex-1">{formatFieldValue(val)}</span>
+                                    <div key={idx} className="flex justify-between gap-3 pb-2 border-b border-gray-100 last:border-0">
+                                        <span className="text-gray-500 flex-shrink-0 capitalize">{key}</span>
+                                        <span className="text-gray-700 text-right break-all flex-1 font-semibold">{formatFieldValue(val)}</span>
                                     </div>
                                 ))}
                             </div>
 
                             {/* Additional info footer */}
-                            <div className="pt-3 border-t border-white/10">
-                                <p className="text-white/30 italic text-[10px]">
+                            <div className="pt-3 border-t border-gray-100">
+                                <p className="text-gray-500 italic text-[10px]">
                                     🔗 Connections: {getConnectionCount(selectedNode.id)}
                                 </p>
                                 {selectedNode.isExpanded && (
-                                    <p className="text-white/30 italic text-[10px] mt-1">
+                                    <p className="text-gray-500 italic text-[10px] mt-1">
                                         From expansion
                                     </p>
                                 )}
