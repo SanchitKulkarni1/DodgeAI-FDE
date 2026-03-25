@@ -261,18 +261,30 @@ export const GraphCanvas: React.FC<GraphCanvasProps> = ({
         // Glow for highlighted nodes
         if (isHL && !node.isBackground) {
             ctx.shadowColor = node.color || '#60a5fa';
-            ctx.shadowBlur = 20;  // Stronger glow for highlights
+            ctx.shadowBlur = 25;  // Stronger glow for highlights
         }
 
         ctx.beginPath();
         ctx.arc(node.x!, node.y!, radius, 0, 2 * Math.PI);
-        // Background nodes: darker (50% opacity), highlighted nodes: bright, others: medium
+        // Background nodes: brighter (70% opacity), highlighted nodes: full brightness
         if (node.isBackground) {
-            ctx.fillStyle = `${node.color || '#60a5fa'}80`;  // 50% opacity for background
+            ctx.fillStyle = `${node.color || '#60a5fa'}b2`;  // 70% opacity for background on dark background
         } else {
             ctx.fillStyle = node.color || '#60a5fa';
         }
         ctx.fill();
+
+        // Add outer glow effect for all nodes
+        ctx.beginPath();
+        ctx.arc(node.x!, node.y!, radius + 2, 0, 2 * Math.PI);
+        if (isHL && !node.isBackground) {
+            ctx.strokeStyle = `${node.color || '#60a5fa'}60`;  // 60% opacity glow
+            ctx.lineWidth = 2;
+        } else if (!node.isBackground) {
+            ctx.strokeStyle = `${node.color || '#60a5fa'}30`;  // 30% opacity glow
+            ctx.lineWidth = 1;
+        }
+        ctx.stroke();
 
         // Reset shadow
         ctx.shadowBlur = 0;
@@ -283,7 +295,7 @@ export const GraphCanvas: React.FC<GraphCanvasProps> = ({
             const fontSize = Math.max(10 / globalScale, 6);
             ctx.font = `${fontSize}px "DM Mono", monospace`;
             // Labels: dark text for highlights, dimmer for others, hidden for background
-            ctx.fillStyle = isHL ? 'rgba(0,0,0,0.95)' : node.isBase ? 'rgba(100,100,100,0.4)' : 'rgba(60,66,72,0.75)';
+            ctx.fillStyle = isHL ? 'rgba(255,255,255,1)' : node.isBase ? 'rgba(180,180,200,0.6)' : 'rgba(200,210,220,0.9)';  // Bright labels for dark background
             ctx.textAlign = 'center';
             ctx.textBaseline = 'top';
             ctx.fillText(label, node.x!, node.y! + radius + 10 / globalScale);
@@ -355,14 +367,14 @@ export const GraphCanvas: React.FC<GraphCanvasProps> = ({
     };
 
     return (
-        <div ref={containerRef} className="w-full h-full relative" style={{ background: '#ffffff' }}>
+        <div ref={containerRef} className="w-full h-full relative" style={{ background: '#0a0e27' }}>
             {dimensions.width > 0 && (
                 <ForceGraph2D
                     ref={fgRef}
                     width={dimensions.width}
                     height={dimensions.height}
                     graphData={graphData}
-                    backgroundColor="#ffffff"
+                    backgroundColor="#0a0e27"
                     nodeCanvasObject={nodeCanvasObject}
                     nodePointerAreaPaint={(node: any, color: string, ctx: CanvasRenderingContext2D) => {
                         const radius = node.isHighlighted ? 10 : node.isBase ? 5 : 7;
@@ -373,17 +385,17 @@ export const GraphCanvas: React.FC<GraphCanvasProps> = ({
                     }}
                     linkColor={(link: any) => {
                         if (link.isHighlighted) return 'rgba(59,130,246,1)';  // Bold bright blue for highlights
-                        if (link.isBackground) return 'rgba(150,150,150,0.3)';  // Darker for background (0.3 opacity)
-                        return 'rgba(200,200,200,0.15)';  // Regular faint for base/other
+                        if (link.isBackground) return 'rgba(120,120,180,0.4)';  // Brighter for dark background (0.4 opacity)
+                        return 'rgba(100,100,150,0.2)';  // Brighter faint for base/other on dark
                     }}
                     linkWidth={(link: any) => {
-                        if (link.isHighlighted) return 3.5;  // Bolder highlights
-                        if (link.isBackground) return 0.8;  // More visible background edges
-                        return 0.8;
+                        if (link.isHighlighted) return 4;  // Even bolder highlights
+                        if (link.isBackground) return 1.2;  // More visible background edges
+                        return 0.9;
                     }}
-                    linkDirectionalParticles={(link: any) => link.isHighlighted ? 6 : 0}  // More particles for highlights
-                    linkDirectionalParticleWidth={2}
-                    linkDirectionalParticleSpeed={0.006}
+                    linkDirectionalParticles={(link: any) => link.isHighlighted ? 8 : 0}  // More particles for highlights
+                    linkDirectionalParticleWidth={2.5}
+                    linkDirectionalParticleSpeed={0.008}
                     onNodeHover={(node: any) => {
                         setHoverNode(node);
                         if (node && containerRef.current) {
@@ -404,9 +416,9 @@ export const GraphCanvas: React.FC<GraphCanvasProps> = ({
                     nodeRelSize={5}
                     enableNodeDrag={true}
                     enableZoomInteraction={true}
-                    d3Force="charge" d3ForceStrength={-120}
-                    linkDistance={200}
-                    distanceMax={500}
+                    d3Force="charge" d3ForceStrength={-300}
+                    linkDistance={350}
+                    distanceMax={800}
                 />
             )}
             
@@ -468,12 +480,19 @@ export const GraphCanvas: React.FC<GraphCanvasProps> = ({
                     ) : (
                         <>
                             <div className="space-y-2 font-mono text-[11px] mb-4">
-                                {getNodeMetadata(selectedNode).map(([key, val], idx) => (
-                                    <div key={idx} className="flex justify-between gap-3 pb-2 border-b border-gray-100 last:border-0">
-                                        <span className="text-gray-500 flex-shrink-0 capitalize">{key}</span>
-                                        <span className="text-gray-700 text-right break-all flex-1 font-semibold">{formatFieldValue(val)}</span>
+                                {getNodeMetadata(selectedNode).length > 0 ? (
+                                    getNodeMetadata(selectedNode).map(([key, val], idx) => (
+                                        <div key={idx} className="flex justify-between gap-3 pb-2 border-b border-gray-100 last:border-0">
+                                            <span className="text-gray-500 flex-shrink-0 capitalize">{key}</span>
+                                            <span className="text-gray-700 text-right break-all flex-1 font-semibold">{formatFieldValue(val)}</span>
+                                        </div>
+                                    ))
+                                ) : (
+                                    <div className="text-gray-500 italic text-center py-3">
+                                        <p className="text-[10px]">Background entity with no query metadata</p>
+                                        {selectedNode.isBackground && <p className="text-[9px] text-gray-400 mt-1">Try clicking highlighted nodes from query results</p>}
                                     </div>
-                                ))}
+                                )}
                             </div>
 
                             {/* Additional info footer */}
