@@ -388,6 +388,18 @@ async def expand_node(node_id: str, node_type: str):
         ]
     }
     
+    # Metric nodes (count, revenue, amount, metric) cannot be expanded
+    # They represent aggregations, not entities. Return empty expansion.
+    metric_types = {"count", "revenue", "amount", "metric"}
+    if node_type in metric_types:
+        return {
+            "nodes": [],
+            "edges": [],
+            "source_node_id": node_id,
+            "source_node_type": node_type,
+            "message": f"Metric nodes of type '{node_type}' cannot be expanded"
+        }
+    
     if node_type not in entity_table_map:
         raise HTTPException(status_code=400, detail=f"Unknown node type: {node_type}")
     

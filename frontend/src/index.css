@@ -1,24 +1,40 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,300&family=Syne:wght@400;500;600;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
+  * { box-sizing: border-box; }
+
   html, body, #root {
-    @apply h-full w-full m-0 p-0 overflow-hidden bg-canvas text-gray-200 antialiased;
+    @apply h-full w-full m-0 p-0 overflow-hidden antialiased;
+    background: #0d0f14;
+    color: #e5e7eb;
+    font-family: 'Syne', sans-serif;
   }
 }
 
-/* Custom scrollbar for Chat panel */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+/* Chat scrollbar */
+.chat-messages::-webkit-scrollbar { width: 3px; }
+.chat-messages::-webkit-scrollbar-track { background: transparent; }
+.chat-messages::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
+
+/* Global scrollbar fallback */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 10px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+
+/* Message entrance animation */
+@keyframes fadeSlideUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
-::-webkit-scrollbar-track {
-  @apply bg-transparent;
-}
-::-webkit-scrollbar-thumb {
-  @apply bg-gray-700 rounded-full;
-}
-::-webkit-scrollbar-thumb:hover {
-  @apply bg-gray-600;
+.message-enter { animation: fadeSlideUp 0.25s ease forwards; }
+
+/* Typing dots stagger */
+@keyframes typingBounce {
+  0%, 80%, 100% { transform: scale(0); }
+  40% { transform: scale(1); }
 }

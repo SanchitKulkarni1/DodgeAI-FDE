@@ -24,14 +24,12 @@ function App() {
   const [isExpandingNode, setIsExpandingNode] = useState(false);
 
   const handleSendMessage = async (query: string) => {
-    // 1. Add user message
     const userMsg: Message = {
       id: Date.now().toString() + '-user',
       role: 'user',
       content: query
     };
     
-    // Extract history before adding new query
     const history = messages.map(m => m.content);
     
     setMessages(prev => [...prev, userMsg]);
@@ -43,11 +41,9 @@ function App() {
         conversation_history: history
       });
 
-      // Update graph highlights
       if (response.highlight_nodes) setHighlightNodes(response.highlight_nodes);
       if (response.highlight_edges) setHighlightEdges(response.highlight_edges);
 
-      // Add assistant message
       const asstMsg: Message = {
         id: Date.now().toString() + '-asst',
         role: 'assistant',
@@ -59,7 +55,6 @@ function App() {
     } catch (error: any) {
       console.error("API Error:", error);
       
-      // Fallback error message
       const errorMsg: Message = {
         id: Date.now().toString() + '-err',
         role: 'assistant',
@@ -83,13 +78,19 @@ function App() {
   };
 
   const handleNodeClick = async (node: any) => {
-    if (isExpandingNode) return; // Prevent multiple simultaneous expansions
+    if (isExpandingNode) return;
+    
+    // Metric nodes (aggregations) cannot be expanded
+    const metricTypes = ['count', 'revenue', 'amount', 'metric'];
+    if (metricTypes.includes(node.type)) {
+      console.log(`Cannot expand metric node of type '${node.type}'`);
+      return;
+    }
     
     setIsExpandingNode(true);
     try {
       const response = await apiClient.expandNode(node.id, node.type || 'unknown');
       
-      // Merge expanded nodes and edges, avoiding duplicates
       setExpandedNodes(prev => {
         const existing = new Map(prev.map(n => [n.id, n]));
         response.nodes.forEach(n => {
@@ -118,10 +119,10 @@ function App() {
   };
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-canvas text-gray-200">
+    <div className="h-screen w-screen flex overflow-hidden bg-[#0d0f14]">
       
-      {/* 60% Graph Panel */}
-      <div className="w-[60%] h-full relative">
+      {/* Left Panel — Graph (~60%) */}
+      <div className="flex-[3] relative">
         <GraphCanvas 
           highlightNodes={highlightNodes} 
           highlightEdges={highlightEdges}
@@ -132,20 +133,20 @@ function App() {
           isExpanding={isExpandingNode}
         />
         
-        {/* Absolute header over graph */}
-        <div className="absolute top-0 left-0 p-6 pointer-events-none">
-          <h1 className="text-2xl font-bold text-white flex items-center gap-2 tracking-tight">
-            <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center shadow-lg shadow-blue-900/50">
-               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-white"><path d="M12 2v20"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+        {/* Branded logo overlay */}
+        <div className="absolute top-0 left-0 p-5 pointer-events-none z-20">
+          <h1 className="text-xl font-bold text-white flex items-center gap-2.5 tracking-tight">
+            <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-violet-600 rounded-lg flex items-center justify-center shadow-lg shadow-blue-900/40">
+               <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-white"><path d="M12 2v20"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
             </div>
             DodgeAI 
-            <span className="font-light opacity-50">FDE</span>
+            <span className="font-light opacity-40 text-base">FDE</span>
           </h1>
         </div>
       </div>
 
-      {/* 40% Chat Panel */}
-      <div className="w-[40%] h-full flex flex-col shadow-2xl relative z-10">
+      {/* Right Panel — Chat (~40%) */}
+      <div className="flex-[2] flex flex-col border-l border-white/10 bg-[#111318]">
         <ChatPanel 
           messages={messages} 
           isLoading={isLoading} 
