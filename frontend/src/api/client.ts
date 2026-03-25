@@ -18,6 +18,13 @@ export interface GraphEdge {
     label?: string;
 }
 
+export interface ExpandNodeResponse {
+    nodes: GraphNode[];
+    edges: GraphEdge[];
+    source_node_id: string;
+    source_node_type: string;
+}
+
 export interface SyncQueryRequest {
     query: string;
     conversation_history: string[];
@@ -47,6 +54,15 @@ export const apiClient = {
     
     async getGraphEdges(): Promise<{ edges: GraphEdge[], edge_count: number }> {
         const response = await axios.get(`${API_BASE_URL}/graph/edges`);
+        return response.data;
+    },
+    
+    async expandNode(nodeId: string, nodeType: string): Promise<ExpandNodeResponse> {
+        const response = await axios.post<ExpandNodeResponse>(
+            `${API_BASE_URL}/graph/expand`,
+            {},
+            { params: { node_id: nodeId, node_type: nodeType } }
+        );
         return response.data;
     }
 };

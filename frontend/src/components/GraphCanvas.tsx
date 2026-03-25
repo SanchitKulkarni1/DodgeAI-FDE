@@ -3,14 +3,27 @@ import { apiClient } from '../api/client';
 import ForceGraph2D from 'react-force-graph-2d';
 import type { ForceGraphMethods } from 'react-force-graph-2d';
 import type { GraphNode, GraphEdge } from '../api/client';
+import { RotateCcw } from 'lucide-react';
 
 interface GraphCanvasProps {
     highlightNodes: GraphNode[];
     highlightEdges: GraphEdge[];
+    expandedNodes?: GraphNode[];
+    expandedEdges?: GraphEdge[];
     onNodeClick?: (node: any) => void;
+    onResetClick?: () => void;
+    isExpanding?: boolean;
 }
 
-export const GraphCanvas: React.FC<GraphCanvasProps> = ({ highlightNodes, highlightEdges, onNodeClick }) => {
+export const GraphCanvas: React.FC<GraphCanvasProps> = ({ 
+    highlightNodes, 
+    highlightEdges,
+    expandedNodes = [],
+    expandedEdges = [],
+    onNodeClick,
+    onResetClick,
+    isExpanding = false
+}) => {
     const fgRef = useRef<ForceGraphMethods | undefined>(undefined);
     const [baseNodes, setBaseNodes] = useState<any[]>([]);
     const [baseEdges, setBaseEdges] = useState<any[]>([]);
@@ -70,28 +83,46 @@ export const GraphCanvas: React.FC<GraphCanvasProps> = ({ highlightNodes, highli
         // Create lookup for colors
         const colorLookup = baseNodes.reduce((acc, n) => ({ ...acc, [n.id]: n.color }), {});
 
-        // Add instance nodes
+        // Add instance nodes from query response
         const instanceNodes = highlightNodes.map(n => ({
             ...n,
             color: colorLookup[n.type] || '#FFFFFF',
             val: 5,
             isBase: false,
+            isExpanded: false,
         }));
 
-        // Deduplicate nodes
-        const allNodes = [...baseNodes, ...instanceNodes];
+        // Add expanded nodes
+        const expandedInstanceNodes = expandedNodes.map(n => ({
+            ...n,
+            color: colorLookup[n.type] || '#FFFFFF',
+            val: 5,
+            isBase: false,
+            isExpanded: true,
+        }));
+
+        // Deduplicate all nodes
+        const allNodes = [...baseNodes, ...instanceNodes, ...expandedInstanceNodes];
         const uniqueNodes = Array.from(new Map(allNodes.map(item => [item.id, item])).values());
 
-        // Instance edges
+        // Instance edges from query response
         const instEdges = highlightEdges.map(e => ({
             ...e,
             isBase: false,
+            isExpanded: false,
         }));
 
-        const allEdges = [...baseEdges, ...instEdges];
+        // Expanded edges
+        const expandedInstEdges = expandedEdges.map(e => ({
+            ...e,
+            isBase: false,
+            isExpanded: true,
+        }));
+
+        const allEdges = [...baseEdges, ...instEdges, ...expandedInstEdges];
         
         return { nodes: uniqueNodes, links: allEdges };
-    }, [baseNodes, baseEdges, highlightNodes, highlightEdges]);
+    }, [baseNodes, baseEdges, highlightNodes, highlightEdges, expandedNodes, expandedEdges]);
 
     return (
         <div ref={containerRef} className="w-full h-full relative bg-canvas">
@@ -104,12 +135,17 @@ export const GraphCanvas: React.FC<GraphCanvasProps> = ({ highlightNodes, highli
                     nodeLabel="label"
                     nodeColor="color"
                     nodeRelSize={6}
-                    linkColor={(link: any) => link.isBase ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.4)'}
-                    linkWidth={(link: any) => link.isBase ? 1 : 2}
-                    linkDirectionalParticles={(link: any) => link.isBase ? 0 : 4}
+                    linkColor={(link: any) => link.isBase ? 'rgba(255,255,255,0.1)' : link.isExpanded ? 'rgba(100,200,255,0.3)' : 'rgba(255,255,255,0.4)'}
+                    linkWidth={(link: any) => link.isBase ? 1 : link.isExpanded ? 2 : 2}
+                    linkDirectionalParticles={(link: any) => link.isBase ? 0 : link.isExpanded ? 2 : 4}
                     linkDirectionalParticleSpeed={0.01}
+                    linkHoverDescription={(link: any) => link.label ? `Relationship: ${link.label}` : ''}
                     onNodeHover={(node: any) => setHoverNode(node)}
-                    onNodeClick={(node: any) => onNodeClick && onNodeClick(node)}
+                    onNodeClick={(node: any) => {
+                        if (!isExpanding && onNodeClick && !node.isBase) {
+                            onNodeClick(node);
+                        }
+                    }}
                     d3VelocityDecay={0.3}
                 />
             )}
@@ -120,7 +156,21 @@ export const GraphCanvas: React.FC<GraphCanvasProps> = ({ highlightNodes, highli
                     <h3 className="font-bold text-white mb-1" style={{ color: hoverNode.color }}>{hoverNode.label}</h3>
                     <div className="text-gray-400 text-xs uppercase tracking-wider mb-2">{hoverNode.isBase ? 'Entity Type' : hoverNode.type?.replace('_', ' ')}</div>
                     {!hoverNode.isBase && <p className="text-gray-300 font-mono text-xs break-all">ID: {hoverNode.id}</p>}
+                    {!hoverNode.isBase && <p className="text-gray-400 text-xs mt-2">Click to expand</p>}
                 </div>
+            )}
+
+            {/* Reset button overlay */}
+            {(expandedNodes.length > 0 || expandedEdges.length > 0) && (
+                <button
+                    onClick={onResetClick}
+                    disabled={isExpanding}
+                    className="absolute top-6 right-6 flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg shadow-lg transition-all pointer-events-auto z-20"
+                    title="Reset graph to initial state"
+                >
+                    <RotateCcw size={16} />
+                    <span className="text-sm font-medium">Reset</span>
+                </button>
             )}
         </div>
     );

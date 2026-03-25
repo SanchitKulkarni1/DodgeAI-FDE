@@ -246,7 +246,7 @@ def build_query_plan(query: str) -> QueryPlan:
                 config=types.GenerateContentConfig(
                     system_instruction=_SYSTEM,
                     temperature=0.0,
-                    max_output_tokens=6000,
+                    max_output_tokens=8000,  # Increased from 6000 to prevent truncation on first attempt
                 ),
             )
 

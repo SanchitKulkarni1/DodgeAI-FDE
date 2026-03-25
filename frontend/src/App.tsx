@@ -17,6 +17,11 @@ function App() {
   
   const [highlightNodes, setHighlightNodes] = useState<GraphNode[]>([]);
   const [highlightEdges, setHighlightEdges] = useState<GraphEdge[]>([]);
+  
+  // Expanded node graph state
+  const [expandedNodes, setExpandedNodes] = useState<GraphNode[]>([]);
+  const [expandedEdges, setExpandedEdges] = useState<GraphEdge[]>([]);
+  const [isExpandingNode, setIsExpandingNode] = useState(false);
 
   const handleSendMessage = async (query: string) => {
     // 1. Add user message
@@ -77,6 +82,41 @@ function App() {
     }
   };
 
+  const handleNodeClick = async (node: any) => {
+    if (isExpandingNode) return; // Prevent multiple simultaneous expansions
+    
+    setIsExpandingNode(true);
+    try {
+      const response = await apiClient.expandNode(node.id, node.type || 'unknown');
+      
+      // Merge expanded nodes and edges, avoiding duplicates
+      setExpandedNodes(prev => {
+        const existing = new Map(prev.map(n => [n.id, n]));
+        response.nodes.forEach(n => {
+          if (!existing.has(n.id)) {
+            existing.set(n.id, n);
+          }
+        });
+        return Array.from(existing.values());
+      });
+      
+      setExpandedEdges(prev => {
+        const existing = new Set(prev.map(e => `${e.source}-${e.target}`));
+        const newEdges = response.edges.filter(e => !existing.has(`${e.source}-${e.target}`));
+        return [...prev, ...newEdges];
+      });
+    } catch (error) {
+      console.error("Error expanding node:", error);
+    } finally {
+      setIsExpandingNode(false);
+    }
+  };
+
+  const handleResetGraph = () => {
+    setExpandedNodes([]);
+    setExpandedEdges([]);
+  };
+
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-canvas text-gray-200">
       
@@ -84,7 +124,12 @@ function App() {
       <div className="w-[60%] h-full relative">
         <GraphCanvas 
           highlightNodes={highlightNodes} 
-          highlightEdges={highlightEdges} 
+          highlightEdges={highlightEdges}
+          expandedNodes={expandedNodes}
+          expandedEdges={expandedEdges}
+          onNodeClick={handleNodeClick}
+          onResetClick={handleResetGraph}
+          isExpanding={isExpandingNode}
         />
         
         {/* Absolute header over graph */}

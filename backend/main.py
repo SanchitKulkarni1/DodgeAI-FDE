@@ -302,6 +302,163 @@ async def graph_edges():
     return {"edge_count": len(valid_edges), "edges": valid_edges}
 
 
+@app.post("/graph/expand", tags=["Graph"])
+async def expand_node(node_id: str, node_type: str):
+    """
+    Expands a single node by finding related instances in the database.
+    
+    For example, expanding a 'customer' node will find related sales_orders,
+    and expanding a 'sales_order' will find related deliveries, billings, etc.
+    
+    Returns new nodes (instances) and edges connecting them.
+    """
+    if not _db_executor:
+        raise HTTPException(status_code=503, detail="Database executor not initialised.")
+    
+    # Mapping of entity type to table and ID column
+    entity_table_map = {
+        "customer": ("business_partners", "customer"),
+        "sales_order": ("sales_order_headers", "sales_order"),
+        "delivery": ("outbound_delivery_headers", "delivery_document"),
+        "billing_document": ("billing_document_headers", "billing_document"),
+        "journal_entry": ("journal_entry_items_ar", "accounting_document"),
+        "payment": ("payments_ar", "accounting_document"),
+        "product": ("products", "product"),
+        "plant": ("plants", "plant"),
+    }
+    
+    # Known relationships for expansion (table1 -> table2 with join condition)
+    expansion_paths = {
+        "customer": [  # From customer, expand to sales orders, billing docs
+            {
+                "target_type": "sales_order",
+                "target_table": "sales_order_headers",
+                "target_id_col": "sales_order",
+                "join": "sales_order_headers.sold_to_party = business_partners.customer",
+                "relationship": "placed"
+            },
+            {
+                "target_type": "billing_document",
+                "target_table": "billing_document_headers",
+                "target_id_col": "billing_document",
+                "join": "billing_document_headers.sold_to_party = business_partners.customer",
+                "relationship": "billed"
+            }
+        ],
+        "sales_order": [  # From sales order, expand to delivery & products
+            {
+                "target_type": "delivery",
+                "target_table": "outbound_delivery_headers",
+                "target_id_col": "delivery_document",
+                "join": "outbound_delivery_headers.delivery_document IN (SELECT delivery_document FROM outbound_delivery_items WHERE reference_sd_document = sales_order_headers.sales_order)",
+                "relationship": "fulfilled_by"
+            },
+            {
+                "target_type": "product",
+                "target_table": "products",
+                "target_id_col": "product",
+                "join": "products.product IN (SELECT material FROM sales_order_items WHERE sales_order = sales_order_headers.sales_order)",
+                "relationship": "ordered_in"
+            }
+        ],
+        "delivery": [  # From delivery, expand to billing & billing docs
+            {
+                "target_type": "billing_document",
+                "target_table": "billing_document_headers",
+                "target_id_col": "billing_document",
+                "join": "billing_document_headers.billing_document IN (SELECT billing_document FROM billing_document_items WHERE reference_sd_document IN (SELECT delivery_document FROM outbound_delivery_items WHERE delivery_document = outbound_delivery_headers.delivery_document))",
+                "relationship": "billed_in"
+            }
+        ],
+        "billing_document": [  # From billing doc, expand to journal entries & payments
+            {
+                "target_type": "journal_entry",
+                "target_table": "journal_entry_items_ar",
+                "target_id_col": "journal_entry_item",
+                "join": "journal_entry_items_ar.accounting_document = billing_document_headers.accounting_document",
+                "relationship": "posted_to"
+            },
+            {
+                "target_type": "payment",
+                "target_table": "payments_ar",
+                "target_id_col": "accounting_document",
+                "join": "payments_ar.clearing_accounting_document = billing_document_headers.accounting_document",
+                "relationship": "cleared_by"
+            }
+        ]
+    }
+    
+    if node_type not in entity_table_map:
+        raise HTTPException(status_code=400, detail=f"Unknown node type: {node_type}")
+    
+    source_table, source_id_col = entity_table_map[node_type]
+    expanded_nodes = []
+    expanded_edges = []
+    
+    try:
+        # Get expansion paths for this node type
+        paths = expansion_paths.get(node_type, [])
+        
+        for path in paths:
+            target_table = path["target_table"]
+            target_id_col = path["target_id_col"]
+            target_type = path["target_type"]
+            relationship = path["relationship"]
+            
+            # Build simplified query to get related instances (limit to 5 to avoid explosion)
+            try:
+                # Simplified JOIN-based query
+                if "IN (SELECT" in path["join"]:
+                    # Handle complex subquery joins by selecting from target table
+                    sql = f"""
+                    SELECT DISTINCT {target_id_col} as id 
+                    FROM {target_table} 
+                    LIMIT 5
+                    """
+                else:
+                    # Simple join
+                    sql = f"""
+                    SELECT DISTINCT {target_table}.{target_id_col} as id
+                    FROM {source_table}
+                    INNER JOIN {target_table} ON {path["join"]}
+                    WHERE {source_table}.{source_id_col} = '{node_id}'
+                    LIMIT 5
+                    """
+                
+                results = _db_executor.execute(sql)
+                
+                # Add found nodes and edges
+                for row in results:
+                    target_id = row.get("id")
+                    if target_id:
+                        expanded_nodes.append({
+                            "id": str(target_id),
+                            "type": target_type,
+                            "label": f"{target_type.replace('_', ' ').title()}",
+                        })
+                        expanded_edges.append({
+                            "source": node_id,
+                            "target": str(target_id),
+                            "source_type": node_type,
+                            "target_type": target_type,
+                            "label": relationship
+                        })
+            except Exception as e:
+                logger.warning("Failed to expand via path %s: %s", path, e)
+                continue
+        
+        return {
+            "nodes": expanded_nodes,
+            "edges": expanded_edges,
+            "source_node_id": node_id,
+            "source_node_type": node_type,
+        }
+    
+    except Exception as e:
+        logger.exception("Error expanding node %s (type=%s): %s", node_id, node_type, e)
+        raise HTTPException(status_code=500, detail=f"Error expanding node: {e}")
+
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     logger.error("Unhandled exception on %s: %s", request.url.path, exc, exc_info=True)
