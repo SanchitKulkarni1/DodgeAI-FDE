@@ -471,6 +471,138 @@ async def expand_node(node_id: str, node_type: str):
         raise HTTPException(status_code=500, detail=f"Error expanding node: {e}")
 
 
+@app.get("/graph/sample", tags=["Graph"])
+async def graph_sample(limit: int = 50):
+    """
+    Returns a sample of instance nodes and edges from the database.
+    Used on page load to display a dense background network.
+    Shows relationships across the O2C flow.
+    
+    Schema references:
+    - sales_order_headers.sales_order, .sold_to_party
+    - outbound_delivery_headers.delivery_document (joined via outbound_delivery_items.reference_sd_document → sales_order)
+    - billing_document_headers.billing_document, .sold_to_party
+    - business_partners.customer
+    """
+    if not _db_executor:
+        raise HTTPException(status_code=503, detail="Database executor not initialised.")
+    
+    sample_nodes = []
+    sample_edges = []
+    seen_nodes = set()
+    
+    try:
+        # Get sample customers from business_partners
+        try:
+            sql_customers = f"SELECT customer FROM business_partners LIMIT {limit//8}"
+            logger.info(f"[GRAPH_SAMPLE] Executing: {sql_customers}")
+            customers = _db_executor.execute(sql_customers)
+            logger.info(f"[GRAPH_SAMPLE] Customers query returned {len(customers)} rows")
+            
+            for row in customers:
+                customer_id = str(row.get("customer"))
+                if customer_id and customer_id not in seen_nodes:
+                    sample_nodes.append({"id": customer_id, "type": "customer", "label": f"Customer {customer_id}"})
+                    seen_nodes.add(customer_id)
+        except Exception as e:
+            logger.warning(f"[GRAPH_SAMPLE] Failed to fetch customers: {e}")
+        
+        # Get sample sales orders with their customers
+        try:
+            sql_orders = f"SELECT sales_order, sold_to_party FROM sales_order_headers LIMIT {limit//3}"
+            logger.info(f"[GRAPH_SAMPLE] Executing: {sql_orders}")
+            orders = _db_executor.execute(sql_orders)
+            logger.info(f"[GRAPH_SAMPLE] Orders query returned {len(orders)} rows")
+            
+            for row in orders:
+                order_id = str(row.get("sales_order"))
+                customer_id = str(row.get("sold_to_party")) if row.get("sold_to_party") else None
+                
+                # Add order node
+                if order_id and order_id not in seen_nodes:
+                    sample_nodes.append({"id": order_id, "type": "sales_order", "label": f"Order {order_id}"})
+                    seen_nodes.add(order_id)
+                
+                # Add customer node if not already added
+                if customer_id and customer_id not in seen_nodes:
+                    sample_nodes.append({"id": customer_id, "type": "customer", "label": f"Customer {customer_id}"})
+                    seen_nodes.add(customer_id)
+                
+                # Add edge from customer to order
+                if customer_id and order_id:
+                    sample_edges.append({
+                        "source": customer_id,
+                        "target": order_id,
+                        "source_type": "customer",
+                        "target_type": "sales_order"
+                    })
+        except Exception as e:
+            logger.warning(f"[GRAPH_SAMPLE] Failed to fetch orders: {e}")
+        
+        # Get sample deliveries and link to orders via outbound_delivery_items
+        try:
+            sql_deliveries = f"""
+            SELECT DISTINCT h.delivery_document, i.reference_sd_document
+            FROM outbound_delivery_headers h
+            LEFT JOIN outbound_delivery_items i ON h.delivery_document = i.delivery_document
+            WHERE i.reference_sd_document IS NOT NULL
+            LIMIT {limit//3}
+            """
+            logger.info(f"[GRAPH_SAMPLE] Executing delivery query")
+            deliveries = _db_executor.execute(sql_deliveries)
+            logger.info(f"[GRAPH_SAMPLE] Deliveries query returned {len(deliveries)} rows")
+            
+            for row in deliveries:
+                delivery_id = str(row.get("delivery_document"))
+                order_id = str(row.get("reference_sd_document")) if row.get("reference_sd_document") else None
+                
+                if delivery_id and delivery_id not in seen_nodes:
+                    sample_nodes.append({"id": delivery_id, "type": "delivery", "label": f"Delivery {delivery_id}"})
+                    seen_nodes.add(delivery_id)
+                
+                if order_id and delivery_id:
+                    sample_edges.append({
+                        "source": order_id,
+                        "target": delivery_id,
+                        "source_type": "sales_order",
+                        "target_type": "delivery"
+                    })
+        except Exception as e:
+            logger.warning(f"[GRAPH_SAMPLE] Failed to fetch deliveries: {e}")
+        
+        # Get sample billing documents with their customers
+        try:
+            sql_billing = f"SELECT billing_document, sold_to_party FROM billing_document_headers WHERE billing_doc_is_cancelled = 0 LIMIT {limit//3}"
+            logger.info(f"[GRAPH_SAMPLE] Executing: {sql_billing}")
+            billings = _db_executor.execute(sql_billing)
+            logger.info(f"[GRAPH_SAMPLE] Billings query returned {len(billings)} rows")
+            
+            for row in billings:
+                billing_id = str(row.get("billing_document"))
+                customer_id = str(row.get("sold_to_party")) if row.get("sold_to_party") else None
+                
+                if billing_id and billing_id not in seen_nodes:
+                    sample_nodes.append({"id": billing_id, "type": "billing_document", "label": f"Invoice {billing_id}"})
+                    seen_nodes.add(billing_id)
+                
+                if customer_id and billing_id:
+                    sample_edges.append({
+                        "source": customer_id,
+                        "target": billing_id,
+                        "source_type": "customer",
+                        "target_type": "billing_document"
+                    })
+        except Exception as e:
+            logger.warning(f"[GRAPH_SAMPLE] Failed to fetch billings: {e}")
+        
+        logger.info(f"[GRAPH_SAMPLE] Generated sample graph: {len(sample_nodes)} nodes, {len(sample_edges)} edges")
+        return {"nodes": sample_nodes, "edges": sample_edges}
+    
+    except Exception as e:
+        logger.exception(f"[GRAPH_SAMPLE] Error generating sample graph: {e}")
+        return {"nodes": [], "edges": []}
+
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     logger.error("Unhandled exception on %s: %s", request.url.path, exc, exc_info=True)
