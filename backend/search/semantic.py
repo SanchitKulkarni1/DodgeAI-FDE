@@ -58,21 +58,62 @@ Entity types and their metadata keys
                       amount, currency, clearing_date, billing_document_id
 
 Dependencies:
-    pip install chromadb sentence-transformers
+    pip install chromadb google-generativeai
 """
 
 import logging
 import sqlite3
+import os
 from pathlib import Path
 import chromadb
-from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
+import google.generativeai as genai
+from chromadb.api.types import EmbeddingFunction, Documents, Embeddings
 
 log = logging.getLogger(__name__)
 
 _DB_PATH     = Path("o2c.db")
 _CHROMA_PATH = "./chroma_store"
 _COLLECTION  = "o2c_entities"
-_EMBED_MODEL = "all-MiniLM-L6-v2"
+_EMBED_MODEL = "models/embedding-001"
+
+# Configure Gemini API
+from pydantic_settings import BaseSettings
+
+class Settings(BaseSettings):
+    gemini_api_key_1: str = ""
+    gemini_api_key_2: str = ""
+    gemini_api_key_3: str = ""
+    gemini_api_key_4: str = ""
+    
+    class Config:
+        env_file = ".env"
+
+settings = Settings()
+_GEMINI_API_KEY = settings.gemini_api_key_1 or settings.gemini_api_key_2 or settings.gemini_api_key_3 or settings.gemini_api_key_4
+
+if _GEMINI_API_KEY:
+    genai.configure(api_key=_GEMINI_API_KEY)
+
+
+class GeminiEmbeddingFunction(EmbeddingFunction):
+    """Custom embedding function using Google Generative AI (Gemini)."""
+    
+    def __call__(self, input: Documents) -> Embeddings:
+        """Generate embeddings using Gemini API."""
+        embeddings = []
+        for text in input:
+            try:
+                response = genai.embed_content(
+                    model=_EMBED_MODEL,
+                    content=text,
+                    task_type="SEMANTIC_SIMILARITY"
+                )
+                embeddings.append(response['embedding'])
+            except Exception as e:
+                log.error(f"[semantic] Failed to embed text with Gemini: {e}")
+                # Fallback to zero vector on error
+                embeddings.append([0.0] * 768)
+        return embeddings
 
 # Module-level cache
 _client     = None
@@ -111,10 +152,7 @@ def _get_client_and_collection():
     if _client is not None and _collection is not None:
         return _client, _collection
 
-    import chromadb
-    from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
-
-    embed_fn = SentenceTransformerEmbeddingFunction(model_name=_EMBED_MODEL)
+    embed_fn = GeminiEmbeddingFunction()
 
     _client = chromadb.PersistentClient(path=_CHROMA_PATH)
     _collection = _client.get_or_create_collection(
@@ -143,9 +181,8 @@ def build_index() -> None:
         from search.semantic import build_index
         build_index()
     """
-    
 
-    embed_fn = SentenceTransformerEmbeddingFunction(model_name=_EMBED_MODEL)
+    embed_fn = GeminiEmbeddingFunction()
     client   = chromadb.PersistentClient(path=_CHROMA_PATH)
 
     # Clean rebuild
