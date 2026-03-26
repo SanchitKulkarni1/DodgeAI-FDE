@@ -3,7 +3,7 @@ import { apiClient } from '../api/client';
 import ForceGraph2D from 'react-force-graph-2d';
 import type { ForceGraphMethods } from 'react-force-graph-2d';
 import type { GraphNode, GraphEdge } from '../api/client';
-import { RotateCcw, Eye, EyeOff, X } from 'lucide-react';
+import { RotateCcw, X } from 'lucide-react';
 
 // Consistent entity color map
 export const ENTITY_COLORS: Record<string, string> = {
@@ -60,7 +60,6 @@ export const GraphCanvas: React.FC<GraphCanvasProps> = ({
     const containerRef = useRef<HTMLDivElement>(null);
     const [hoverNode, setHoverNode] = useState<any | null>(null);
     const [selectedNode, setSelectedNode] = useState<any | null>(null);
-    const [showOverlay, setShowOverlay] = useState(true);
     const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
 
     // Set of highlighted node IDs for fast lookup
@@ -199,7 +198,8 @@ export const GraphCanvas: React.FC<GraphCanvasProps> = ({
         const allNodes = [
             ...baseNodes,
             ...backgroundInstanceNodes,
-            ...(showOverlay ? [...instanceNodes, ...expandedInstanceNodes] : [])
+            ...instanceNodes, 
+            ...expandedInstanceNodes
         ];
         
         const uniqueNodes = Array.from(new Map(allNodes.map(item => [item.id, item])).values());
@@ -242,11 +242,12 @@ export const GraphCanvas: React.FC<GraphCanvasProps> = ({
         const allEdges = [
             ...baseEdges,
             ...backgroundEdgeObjs,
-            ...(showOverlay ? [...instEdges, ...expandedInstEdges] : [])
+            ...instEdges, 
+            ...expandedInstEdges
         ].filter(edge => validNodeIds.has(String(edge.source)) && validNodeIds.has(String(edge.target)));
         
         return { nodes: uniqueNodes, links: allEdges };
-    }, [baseNodes, baseEdges, backgroundNodes, backgroundEdges, highlightNodes, highlightEdges, expandedNodes, expandedEdges, showOverlay]);
+    }, [baseNodes, baseEdges, backgroundNodes, backgroundEdges, highlightNodes, highlightEdges, expandedNodes, expandedEdges]);
 
     // Configure d3 layout forces natively
     useEffect(() => {
@@ -513,24 +514,7 @@ export const GraphCanvas: React.FC<GraphCanvasProps> = ({
                 </div>
             )}
 
-            {/* Overlay toggle button */}
-            {showOverlay ? (
-                <button 
-                    onClick={() => setShowOverlay(false)}
-                    className="absolute top-14 left-5 z-20 flex items-center gap-2 bg-white/10 hover:bg-white/20 border border-white/10 text-white text-xs px-3 py-2 rounded-lg backdrop-blur-sm transition-all"
-                >
-                    <Eye size={14} />
-                    Hide Granular Overlay
-                </button>
-            ) : (
-                <button 
-                    onClick={() => setShowOverlay(true)}
-                    className="absolute top-14 left-5 z-20 flex items-center gap-2 bg-white/10 hover:bg-white/20 border border-white/10 text-white text-xs px-3 py-2 rounded-lg backdrop-blur-sm transition-all"
-                >
-                    <EyeOff size={14} />
-                    Show Granular Overlay
-                </button>
-            )}
+
 
             {/* Reset button overlay */}
             {(expandedNodes.length > 0 || expandedEdges.length > 0) && (
