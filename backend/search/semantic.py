@@ -35,6 +35,7 @@ _USE_CLOUD = os.getenv("CHROMA_USE_CLOUD", "false").lower() == "true"
 _CHROMA_API_KEY = os.getenv("CHROMA_API_KEY")
 _CHROMA_TENANT_ID = os.getenv("CHROMA_TENANT_ID")
 _CHROMA_DATABASE = os.getenv("CHROMA_DATABASE", "dodgeai-o2c")
+_CHROMA_HOST = os.getenv("CHROMA_HOST", "api.trychroma.com")
 
 # Updated: old "models/embedding-001" was deprecated Jan 14 2026
 _EMBED_MODEL = "gemini-embedding-001"
@@ -145,6 +146,7 @@ def _get_client_and_collection():
         else:
             try:
                 _client = chromadb.CloudClient(
+                    cloud_host=_CHROMA_HOST,
                     api_key=_CHROMA_API_KEY,
                     tenant=_CHROMA_TENANT_ID,
                     database=_CHROMA_DATABASE,
@@ -206,6 +208,7 @@ def build_index() -> None:
         else:
             try:
                 client = chromadb.CloudClient(
+                    cloud_host=_CHROMA_HOST,
                     api_key=_CHROMA_API_KEY,
                     tenant=_CHROMA_TENANT_ID,
                     database=_CHROMA_DATABASE,
