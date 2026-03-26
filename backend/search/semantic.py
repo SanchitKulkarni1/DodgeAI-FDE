@@ -10,6 +10,8 @@ Dependencies:
 import logging
 import sqlite3
 from pathlib import Path
+import os
+from dotenv import load_dotenv
 
 import chromadb
 from chromadb.api.types import EmbeddingFunction, Documents, Embeddings
@@ -20,11 +22,20 @@ from llm.client import gemini, MODEL, types
 # Import Redis caching layer
 import cache
 
+# Load environment variables
+load_dotenv()
+
 log = logging.getLogger(__name__)
 
 _DB_PATH     = Path("o2c.db")
 _CHROMA_PATH = "./chroma_store"
 _COLLECTION  = "o2c_entities"
+
+# ChromaDB configuration: use cloud if enabled, otherwise local
+_USE_CLOUD = os.getenv("CHROMA_USE_CLOUD", "false").lower() == "true"
+_CHROMA_API_KEY = os.getenv("CHROMA_API_KEY")
+_CHROMA_TENANT_ID = os.getenv("CHROMA_TENANT_ID")
+_CHROMA_DATABASE = os.getenv("CHROMA_DATABASE", "dodgeai-o2c")
 
 # Updated: old "models/embedding-001" was deprecated Jan 14 2026
 _EMBED_MODEL = "gemini-embedding-001"
@@ -124,7 +135,30 @@ def _get_client_and_collection():
     if _client is not None and _collection is not None:
         return _client, _collection
 
-    _client = chromadb.PersistentClient(path=_CHROMA_PATH)
+    # Initialize client (cloud or local)
+    if _USE_CLOUD:
+        if not _CHROMA_API_KEY or not _CHROMA_TENANT_ID:
+            log.warning(
+                "[semantic] CHROMA_USE_CLOUD=true but credentials missing. "
+                "Falling back to local ChromaDB."
+            )
+            _client = chromadb.PersistentClient(path=_CHROMA_PATH)
+        else:
+            try:
+                _client = chromadb.CloudClient(
+                    api_key=_CHROMA_API_KEY,
+                    tenant=_CHROMA_TENANT_ID,
+                    database=_CHROMA_DATABASE,
+                )
+                log.info(
+                    "[semantic] Connected to ChromaDB Cloud (tenant=%s..., db=%s)",
+                    _CHROMA_TENANT_ID[:8], _CHROMA_DATABASE
+                )
+            except Exception as e:
+                log.error("[semantic] CloudClient init failed: %s. Falling back to local.", e)
+                _client = chromadb.PersistentClient(path=_CHROMA_PATH)
+    else:
+        _client = chromadb.PersistentClient(path=_CHROMA_PATH)
     
     # Try to get existing collection first (don't specify embedding_function
     # to avoid conflicts with persisted embeddings)
@@ -161,7 +195,28 @@ def build_index() -> None:
     """
 
     embed_fn = GeminiEmbeddingFunction()          # picks up updated client
-    client   = chromadb.PersistentClient(path=_CHROMA_PATH)
+    
+    # Initialize client (cloud or local)
+    if _USE_CLOUD:
+        if not _CHROMA_API_KEY or not _CHROMA_TENANT_ID:
+            log.warning(
+                "[semantic] CHROMA_USE_CLOUD=true but credentials missing. "
+                "Using local for build_index."
+            )
+            client = chromadb.PersistentClient(path=_CHROMA_PATH)
+        else:
+            try:
+                client = chromadb.CloudClient(
+                    api_key=_CHROMA_API_KEY,
+                    tenant=_CHROMA_TENANT_ID,
+                    database=_CHROMA_DATABASE,
+                )
+                log.info("[semantic] build_index using ChromaDB Cloud")
+            except Exception as e:
+                log.error("[semantic] CloudClient init failed: %s. Using local.", e)
+                client = chromadb.PersistentClient(path=_CHROMA_PATH)
+    else:
+        client = chromadb.PersistentClient(path=_CHROMA_PATH)
 
     try:
         client.delete_collection(_COLLECTION)
@@ -503,12 +558,24 @@ def semantic_search(
             where = {"$and": filters}
 
     try:
-        results = collection.query(
-            query_texts=[query],
-            n_results=min(top_k, collection.count()),
-            where=where,
-            include=["documents", "metadatas", "distances"],
-        )
+        # For ChromaDB Cloud, we need to compute query embeddings ourselves
+        # because CloudClient may use a different embedding dimension
+        if _USE_CLOUD:
+            embed_fn = GeminiEmbeddingFunction()
+            query_embedding = embed_fn([query])
+            results = collection.query(
+                query_embeddings=query_embedding,
+                n_results=min(top_k, collection.count()),
+                where=where,
+                include=["documents", "metadatas", "distances"],
+            )
+        else:
+            results = collection.query(
+                query_texts=[query],
+                n_results=min(top_k, collection.count()),
+                where=where,
+                include=["documents", "metadatas", "distances"],
+            )
     except Exception as e:
         log.error("[semantic] query failed: %s", e)
         return []
@@ -568,8 +635,12 @@ class SemanticIndex:
     """Stateful wrapper for ChromaDB semantic search. Initialize once at startup."""
 
     def __init__(self):
+        log.info("[SemanticIndex] Connecting to ChromaDB %s...", 
+                 "Cloud" if _USE_CLOUD else "Local")
         self._client, self._collection = _get_client_and_collection()
-        log.info("[SemanticIndex] initialized — collection '%s' ready", _COLLECTION)
+        doc_count = self._collection.count() if self._collection else 0
+        log.info("[SemanticIndex] ✅ Connected — collection '%s' ready (%d docs)", 
+                 _COLLECTION, doc_count)
 
     def search(
         self,
