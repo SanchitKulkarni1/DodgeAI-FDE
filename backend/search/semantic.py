@@ -15,7 +15,6 @@ from dotenv import load_dotenv
 
 import chromadb
 from chromadb.api.types import EmbeddingFunction, Documents, Embeddings
-import chromadb.errors
 
 from llm.client import gemini, MODEL, types
 
@@ -168,7 +167,7 @@ def _get_client_and_collection():
             "[semantic] Loaded existing ChromaDB collection '%s' — %d docs",
             _COLLECTION, _collection.count(),
         )
-    except (ValueError, chromadb.errors.NotFoundError):
+    except ValueError:
         # Collection doesn't exist; create it with embedding function
         embed_fn = GeminiEmbeddingFunction()
         _collection = _client.create_collection(

@@ -121,7 +121,8 @@ def push_to_cloud(cloud_client: chromadb.Client, collections_data: dict) -> None
             try:
                 cloud_client.delete_collection(coll_name)
                 log.info(f"  └─ Deleted existing cloud collection '{coll_name}'")
-            except chromadb.errors.NotFoundError:
+            except (ValueError, Exception):
+                # Collection doesn't exist or error deleting; that's ok
                 pass
             
             # Create collection with embedding function
