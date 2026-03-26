@@ -27,11 +27,11 @@ load_dotenv()
 log = logging.getLogger(__name__)
 
 # PostgreSQL connection parameters from environment
-_DB_HOST = os.getenv("DB_HOST", "localhost")
-_DB_PORT = int(os.getenv("DB_PORT", 5432))
-_DB_USER = os.getenv("DB_USER", "postgres")
-_DB_PASSWORD = os.getenv("DB_PASSWORD", "postgres")
-_DB_NAME = os.getenv("DB_NAME", "dodgeai_o2c")
+_DB_HOST = os.getenv("DB_HOST", "localhost").strip()
+_DB_PORT = int(str(os.getenv("DB_PORT", 5432)).strip())
+_DB_USER = os.getenv("DB_USER", "postgres").strip()
+_DB_PASSWORD = os.getenv("DB_PASSWORD", "postgres").strip()
+_DB_NAME = os.getenv("DB_NAME", "dodgeai_o2c").strip()
 
 _ROW_LIMIT = 200
 _TIMEOUT = 10.0  # seconds
