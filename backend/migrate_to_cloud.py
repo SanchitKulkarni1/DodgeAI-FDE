@@ -40,7 +40,7 @@ LOCAL_CHROMA_PATH = "./chroma_store"
 
 # ChromaDB Cloud credentials
 CHROMA_API_KEY = os.getenv("CHROMA_API_KEY")
-CHROMA_TENANT_ID = os.getenv("CHROMA_TENANT_ID")
+CHROMA_TENANT_ID = os.getenv("CHROMA_TENANT")  # Note: .env uses CHROMA_TENANT
 CHROMA_DATABASE = os.getenv("CHROMA_DATABASE", "dodgeai-o2c")
 
 # Validate credentials

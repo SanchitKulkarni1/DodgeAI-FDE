@@ -12,7 +12,7 @@ load_dotenv()
 
 # Get credentials
 API_KEY = os.getenv("CHROMA_API_KEY")
-TENANT_ID = os.getenv("CHROMA_TENANT_ID")
+TENANT_ID = os.getenv("CHROMA_TENANT")  # Note: .env uses CHROMA_TENANT
 DATABASE = os.getenv("CHROMA_DATABASE", "dodgeai-o2c")
 USE_CLOUD = os.getenv("CHROMA_USE_CLOUD", "true").lower() == "true"
 
