@@ -44,9 +44,12 @@ DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_PORT = int(os.getenv("DB_PORT", 5432))
 DB_USER = os.getenv("DB_USER", "postgres")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "postgres")
+DB_NAME = os.getenv("DB_NAME", "postgres")
 
-# DATABASE_URL="postgresql://dodgeai_o2c_user:OQq3Ietbd4IOTs61uBuOHKpMctQY8YPJ@dpg-d7235cruibrs73cr23e0-a.singapore-postgres.render.com/dodgeai_o2c"
-DATABASE_URL="postgresql://postgres:Auzpk%407036r@db.wkiclxcdufzzmcspgzul.supabase.co:5432/postgres"
+# Use DATABASE_URL from .env if available, otherwise construct from components
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
 # ---------------------------------------------------------------------------
 # Schema definitions
