@@ -1,11 +1,14 @@
 """
 search/semantic.py — ChromaDB-backed vector similarity search over O2C entities.
 
+
 [docstring unchanged — omitted for brevity]
+
 
 Dependencies:
     pip install chromadb google-genai pydantic-settings
 """
+
 
 import logging
 import sqlite3
@@ -13,42 +16,51 @@ from pathlib import Path
 import os
 from dotenv import load_dotenv
 
+
 import chromadb
 from chromadb.api.types import EmbeddingFunction, Documents, Embeddings
 
+
 from llm.client import gemini, MODEL, types
+
 
 # Import Redis caching layer
 import cache
 
+
 # Load environment variables
 load_dotenv()
 
+
 log = logging.getLogger(__name__)
+
 
 _DB_PATH     = Path("o2c.db")
 _CHROMA_PATH = "./chroma_store"
 _COLLECTION  = "o2c_entities"
 
+
 # ChromaDB configuration: use cloud if enabled, otherwise local
-_USE_CLOUD = os.getenv("CHROMA_USE_CLOUD", "false").lower() == "true"
-_CHROMA_API_KEY = os.getenv("CHROMA_API_KEY")
-_CHROMA_TENANT_ID = os.getenv("CHROMA_TENANT")
-_CHROMA_DATABASE = os.getenv("CHROMA_DATABASE", "dodgeai-o2c")
-_CHROMA_HOST = os.getenv("CHROMA_HOST", "api.trychroma.com")
+_USE_CLOUD        = os.getenv("CHROMA_USE_CLOUD", "false").lower() == "true"
+_CHROMA_API_KEY   = os.getenv("CHROMA_API_KEY")
+_CHROMA_TENANT_ID = os.getenv("CHROMA_TENANT")        # ✅ FIX 1: was "CHROMA_TENANT_ID"
+_CHROMA_DATABASE  = os.getenv("CHROMA_DATABASE", "dodgeai-o2c")
+
 
 # Updated: old "models/embedding-001" was deprecated Jan 14 2026
 _EMBED_MODEL = "gemini-embedding-001"
+
 
 
 # ---------------------------------------------------------------------------
 # Embedding function
 # ---------------------------------------------------------------------------
 
+
 class GeminiEmbeddingFunction(EmbeddingFunction):
     """
     ChromaDB-compatible embedding function backed by google-genai SDK.
-    
+
     Uses the centralized gemini client from llm.client with automatic rate limit
     handling via GeminiRoundRobinClient.
     """
@@ -62,23 +74,19 @@ class GeminiEmbeddingFunction(EmbeddingFunction):
             return [[0.0] * 3072] * len(input)
 
         try:
-            # Use google.genai SDK's embed_content() through the client
             embeddings = []
             for text in input:
                 response = self._client.models.embed_content(
                     model=_EMBED_MODEL,
-                    contents=text,  # google.genai accepts string or list
+                    contents=text,
                 )
-                # google.genai response has .embedding or .embeddings (as ContentEmbedding objects)
                 if hasattr(response, 'embedding'):
-                    # Single embedding - extract values if it's a ContentEmbedding object
                     embedding = response.embedding
                     if hasattr(embedding, 'values'):
                         embeddings.append(embedding.values)
                     else:
                         embeddings.append(embedding)
                 elif hasattr(response, 'embeddings') and response.embeddings:
-                    # Multiple embeddings - extract .values from ContentEmbedding object
                     embedding_obj = response.embeddings[0]
                     if hasattr(embedding_obj, 'values'):
                         embeddings.append(embedding_obj.values)
@@ -87,7 +95,7 @@ class GeminiEmbeddingFunction(EmbeddingFunction):
                 else:
                     log.warning("[semantic] Unexpected embedding response format")
                     embeddings.append([0.0] * 3072)
-            
+
             return embeddings
 
         except Exception as e:
@@ -95,26 +103,32 @@ class GeminiEmbeddingFunction(EmbeddingFunction):
             return [[0.0] * 3072] * len(input)
 
 
+
 # ---------------------------------------------------------------------------
-# Module-level cache (unchanged interface)
+# Module-level cache
 # ---------------------------------------------------------------------------
+
 
 _client     = None
 _collection = None
 
 
+
 # ---------------------------------------------------------------------------
-# Type coercion helpers (unchanged)
+# Type coercion helpers
 # ---------------------------------------------------------------------------
+
 
 def _s(v) -> str:
     return str(v) if v is not None else ""
+
 
 def _f(v) -> float:
     try:
         return float(v) if v is not None else 0.0
     except (TypeError, ValueError):
         return 0.0
+
 
 def _b(v) -> bool:
     if isinstance(v, bool):
@@ -124,9 +138,11 @@ def _b(v) -> bool:
     return False
 
 
+
 # ---------------------------------------------------------------------------
-# Client initialisation (unchanged interface)
+# Client initialisation
 # ---------------------------------------------------------------------------
+
 
 def _get_client_and_collection():
     """Return cached ChromaDB client + collection, initialising if needed."""
@@ -135,7 +151,6 @@ def _get_client_and_collection():
     if _client is not None and _collection is not None:
         return _client, _collection
 
-    # Initialize client (cloud or local)
     if _USE_CLOUD:
         if not _CHROMA_API_KEY or not _CHROMA_TENANT_ID:
             log.warning(
@@ -145,8 +160,7 @@ def _get_client_and_collection():
             _client = chromadb.PersistentClient(path=_CHROMA_PATH)
         else:
             try:
-                _client = chromadb.CloudClient(
-                    cloud_host=_CHROMA_HOST,
+                _client = chromadb.CloudClient(   # ✅ FIX 2: removed cloud_host param
                     api_key=_CHROMA_API_KEY,
                     tenant=_CHROMA_TENANT_ID,
                     database=_CHROMA_DATABASE,
@@ -160,9 +174,7 @@ def _get_client_and_collection():
                 _client = chromadb.PersistentClient(path=_CHROMA_PATH)
     else:
         _client = chromadb.PersistentClient(path=_CHROMA_PATH)
-    
-    # Try to get existing collection first (don't specify embedding_function
-    # to avoid conflicts with persisted embeddings)
+
     try:
         _collection = _client.get_collection(name=_COLLECTION)
         log.info(
@@ -170,7 +182,6 @@ def _get_client_and_collection():
             _COLLECTION, _collection.count(),
         )
     except ValueError:
-        # Collection doesn't exist; create it with embedding function
         embed_fn = GeminiEmbeddingFunction()
         _collection = _client.create_collection(
             name=_COLLECTION,
@@ -185,9 +196,11 @@ def _get_client_and_collection():
     return _client, _collection
 
 
+
 # ---------------------------------------------------------------------------
-# Index builder (unchanged logic, updated embed_fn instantiation)
+# Index builder
 # ---------------------------------------------------------------------------
+
 
 def build_index() -> None:
     """
@@ -195,9 +208,8 @@ def build_index() -> None:
     Deletes the existing collection first so stale documents never accumulate.
     """
 
-    embed_fn = GeminiEmbeddingFunction()          # picks up updated client
-    
-    # Initialize client (cloud or local)
+    embed_fn = GeminiEmbeddingFunction()
+
     if _USE_CLOUD:
         if not _CHROMA_API_KEY or not _CHROMA_TENANT_ID:
             log.warning(
@@ -207,8 +219,7 @@ def build_index() -> None:
             client = chromadb.PersistentClient(path=_CHROMA_PATH)
         else:
             try:
-                client = chromadb.CloudClient(
-                    cloud_host=_CHROMA_HOST,
+                client = chromadb.CloudClient(     # ✅ FIX 2: removed cloud_host param
                     api_key=_CHROMA_API_KEY,
                     tenant=_CHROMA_TENANT_ID,
                     database=_CHROMA_DATABASE,
@@ -505,9 +516,11 @@ def build_index() -> None:
     )
 
 
+
 # ---------------------------------------------------------------------------
-# Search (unchanged interface)
+# Search
 # ---------------------------------------------------------------------------
+
 
 def semantic_search(
     query: str,
@@ -519,27 +532,25 @@ def semantic_search(
     """
     Find the top_k most semantically similar entities to the query.
     Uses Redis cache for fast lookups of identical queries (~90% latency reduction on cache hit).
-    
+
     Args:
         query: Semantic search query
         top_k: Max results to return
         entity_type: Optional filter by entity type
         customer_id: Optional filter by customer ID
         where: Optional ChromaDB filter dict
-    
+
     Returns:
         List of dicts with entity_type, entity_id, label, score, metadata
     """
-    # Generate cache key (include top_k and filters in key)
     cache_key_parts = [query, str(top_k), str(entity_type), str(customer_id)]
     cache_key_query = "|".join(cache_key_parts)
-    
-    # Check cache first
+
     cached_result = cache.get_cached(cache_key_query, query_type="semantic", customer_id=customer_id)
     if cached_result is not None:
         log.info("[semantic] Cache HIT — %d results from cache", len(cached_result))
         return cached_result
-    
+
     _, collection = _get_client_and_collection()
 
     if collection.count() == 0:
@@ -560,8 +571,6 @@ def semantic_search(
             where = {"$and": filters}
 
     try:
-        # For ChromaDB Cloud, we need to compute query embeddings ourselves
-        # because CloudClient may use a different embedding dimension
         if _USE_CLOUD:
             embed_fn = GeminiEmbeddingFunction()
             query_embedding = embed_fn([query])
@@ -592,14 +601,13 @@ def semantic_search(
         output.append({
             "entity_type": meta.get("type",      ""),
             "entity_id":   meta.get("entity_id", ""),
-            "label":       meta.get("label",      ""),
+            "label":       meta.get("label",     ""),
             "score":       round(score, 4),
             "metadata":    meta,
         })
 
     output.sort(key=lambda x: x["score"], reverse=True)
-    
-    # Store result in cache (10 min TTL for semantic results)
+
     cache.set_cached(cache_key_query, output, query_type="semantic", customer_id=customer_id, ttl=600)
 
     log.info(
@@ -612,9 +620,11 @@ def semantic_search(
     return output
 
 
+
 # ---------------------------------------------------------------------------
-# UI helper (unchanged)
+# UI helper
 # ---------------------------------------------------------------------------
+
 
 def nodes_from_semantic_results(results: list[dict]) -> list[dict]:
     seen: dict[tuple, dict] = {}
@@ -629,19 +639,21 @@ def nodes_from_semantic_results(results: list[dict]) -> list[dict]:
     return list(seen.values())
 
 
+
 # ---------------------------------------------------------------------------
-# SemanticIndex wrapper (unchanged public interface)
+# SemanticIndex wrapper
 # ---------------------------------------------------------------------------
+
 
 class SemanticIndex:
     """Stateful wrapper for ChromaDB semantic search. Initialize once at startup."""
 
     def __init__(self):
-        log.info("[SemanticIndex] Connecting to ChromaDB %s...", 
+        log.info("[SemanticIndex] Connecting to ChromaDB %s...",
                  "Cloud" if _USE_CLOUD else "Local")
         self._client, self._collection = _get_client_and_collection()
         doc_count = self._collection.count() if self._collection else 0
-        log.info("[SemanticIndex] ✅ Connected — collection '%s' ready (%d docs)", 
+        log.info("[SemanticIndex] ✅ Connected — collection '%s' ready (%d docs)",
                  _COLLECTION, doc_count)
 
     def search(
