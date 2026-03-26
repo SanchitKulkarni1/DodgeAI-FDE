@@ -53,8 +53,8 @@ async def lifespan(app: FastAPI):
     logger.info("  ↳ Loading ChromaDB semantic index …")
     _semantic_index = SemanticIndex()          # loads persisted ./chroma_store
 
-    # 3. Open read-only SQLite connection
-    logger.info("  ↳ Opening read-only SQLite connection …")
+    # 3. Open read-only PostgreSQL connection
+    logger.info("  ↳ Opening read-only PostgreSQL connection …")
     _db_executor = get_executor()
 
     logger.info("✅  Startup complete — ready to accept requests.")

@@ -45,6 +45,8 @@ DB_PORT = int(os.getenv("DB_PORT", 5432))
 DB_USER = os.getenv("DB_USER", "postgres")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "postgres")
 
+# DATABASE_URL="postgresql://dodgeai_o2c_user:OQq3Ietbd4IOTs61uBuOHKpMctQY8YPJ@dpg-d7235cruibrs73cr23e0-a.singapore-postgres.render.com/dodgeai_o2c"
+DATABASE_URL="postgresql://postgres:Auzpk%407036r@db.wkiclxcdufzzmcspgzul.supabase.co:5432/postgres"
 
 # ---------------------------------------------------------------------------
 # Schema definitions
@@ -118,9 +120,9 @@ SCHEMAS: dict[str, Any] = {
             ("last_change_datetime",       "VARCHAR(30)",    "lastChangeDateTime",          _datetime),
             ("total_net_amount",           "NUMERIC(15,2)",  "totalNetAmount",              _real),
             ("transaction_currency",       "VARCHAR(3)",     "transactionCurrency",         _text),
-            ("overall_delivery_status",    "VARCHAR(1)",     "overallDeliveryStatus",       _text),
-            ("overall_billing_status",     "VARCHAR(1)",     "overallOrdReltdBillgStatus",  _text),
-            ("overall_sd_ref_status",      "VARCHAR(1)",     "overallSdDocReferenceStatus", _text),
+            ("overall_delivery_status",    "VARCHAR(10)",    "overallDeliveryStatus",       _text),
+            ("overall_billing_status",     "VARCHAR(10)",    "overallOrdReltdBillgStatus",  _text),
+            ("overall_sd_ref_status",      "VARCHAR(10)",    "overallSdDocReferenceStatus", _text),
             ("pricing_date",               "DATE",           "pricingDate",                 _date),
             ("requested_delivery_date",    "DATE",           "requestedDeliveryDate",       _date),
             ("header_billing_block",       "VARCHAR(2)",     "headerBillingBlockReason",    _text),
@@ -128,7 +130,7 @@ SCHEMAS: dict[str, Any] = {
             ("incoterms_classification",   "VARCHAR(3)",     "incotermsClassification",     _text),
             ("incoterms_location1",        "VARCHAR(27)",    "incotermsLocation1",          _text),
             ("customer_payment_terms",     "VARCHAR(4)",     "customerPaymentTerms",        _text),
-            ("total_credit_check_status",  "VARCHAR(1)",     "totalCreditCheckStatus",      _text),
+            ("total_credit_check_status",  "VARCHAR(10)",    "totalCreditCheckStatus",      _text),
         ],
     },
 
@@ -138,7 +140,7 @@ SCHEMAS: dict[str, Any] = {
         "cols": [
             ("sales_order",                "VARCHAR(20)",    "salesOrder",                  _text),
             ("sales_order_item",           "VARCHAR(6)",     "salesOrderItem",              _text),
-            ("sales_order_item_category",  "VARCHAR(1)",     "salesOrderItemCategory",      _text),
+            ("sales_order_item_category",  "VARCHAR(10)",    "salesOrderItemCategory",      _text),
             ("material",                   "VARCHAR(40)",    "material",                    _text),
             ("requested_quantity",         "NUMERIC(13,3)",  "requestedQuantity",           _real),
             ("requested_quantity_unit",    "VARCHAR(3)",     "requestedQuantityUnit",       _text),
@@ -178,10 +180,10 @@ SCHEMAS: dict[str, Any] = {
             ("actual_goods_movement_time",     "VARCHAR(8)",      "actualGoodsMovementTime",     _text),
             ("delivery_block_reason",          "VARCHAR(2)",      "deliveryBlockReason",         _text),
             ("header_billing_block",           "VARCHAR(2)",      "headerBillingBlockReason",    _text),
-            ("overall_goods_movement_status",  "VARCHAR(1)",      "overallGoodsMovementStatus",  _text),
-            ("overall_picking_status",         "VARCHAR(1)",      "overallPickingStatus",        _text),
-            ("overall_pod_status",             "VARCHAR(1)",      "overallProofOfDeliveryStatus", _text),
-            ("hdr_general_incompletion",       "VARCHAR(1)",      "hdrGeneralIncompletionStatus", _text),
+            ("overall_goods_movement_status",  "VARCHAR(10)",     "overallGoodsMovementStatus",  _text),
+            ("overall_picking_status",         "VARCHAR(10)",     "overallPickingStatus",        _text),
+            ("overall_pod_status",             "VARCHAR(10)",     "overallProofOfDeliveryStatus", _text),
+            ("hdr_general_incompletion",       "VARCHAR(10)",     "hdrGeneralIncompletionStatus", _text),
         ],
     },
 
@@ -281,7 +283,7 @@ SCHEMAS: dict[str, Any] = {
             ("amount_in_company_code_currency", "NUMERIC(15,2)",   "amountInCompanyCodeCurrency",  _real),
             ("posting_date",                    "DATE",            "postingDate",                  _date),
             ("document_date",                   "DATE",            "documentDate",                 _date),
-            ("financial_account_type",          "VARCHAR(1)",      "financialAccountType",         _text),
+            ("financial_account_type",          "VARCHAR(10)",     "financialAccountType",         _text),
             ("clearing_date",                   "DATE",            "clearingDate",                 _date),
             ("clearing_accounting_document",    "VARCHAR(20)",     "clearingAccountingDocument",   _text),
             ("clearing_doc_fiscal_year",        "VARCHAR(4)",      "clearingDocFiscalYear",        _text),
@@ -314,7 +316,7 @@ SCHEMAS: dict[str, Any] = {
             ("document_date",                   "DATE",            "documentDate",                 _date),
             ("assignment_reference",            "VARCHAR(18)",     "assignmentReference",          _text),
             ("gl_account",                      "VARCHAR(10)",     "glAccount",                    _text),
-            ("financial_account_type",          "VARCHAR(1)",      "financialAccountType",         _text),
+            ("financial_account_type",          "VARCHAR(10)",     "financialAccountType",         _text),
             ("profit_center",                   "VARCHAR(10)",     "profitCenter",                 _text),
             ("cost_center",                     "VARCHAR(10)",     "costCenter",                   _text),
         ],
@@ -326,7 +328,7 @@ SCHEMAS: dict[str, Any] = {
         "cols": [
             ("business_partner",           "VARCHAR(20)",     "businessPartner",              _text),
             ("customer",                   "VARCHAR(20)",     "customer",                     _text),
-            ("business_partner_category",  "VARCHAR(1)",      "businessPartnerCategory",      _text),
+            ("business_partner_category",  "VARCHAR(10)",     "businessPartnerCategory",      _text),
             ("business_partner_full_name", "VARCHAR(80)",     "businessPartnerFullName",      _text),
             ("business_partner_name",      "VARCHAR(40)",     "businessPartnerName",          _text),
             ("organization_bp_name1",      "VARCHAR(40)",     "organizationBpName1",          _text),
@@ -340,7 +342,7 @@ SCHEMAS: dict[str, Any] = {
             ("creation_date",              "DATE",            "creationDate",                 _date),
             ("last_change_date",           "DATE",            "lastChangeDate",               _date),
             ("created_by_user",            "VARCHAR(12)",     "createdByUser",                _text),
-            ("correspondence_language",    "VARCHAR(1)",      "correspondenceLanguage",       _text),
+            ("correspondence_language",    "VARCHAR(10)",     "correspondenceLanguage",       _text),
         ],
     },
 
@@ -421,7 +423,7 @@ SCHEMAS: dict[str, Any] = {
             ("gross_weight",                   "NUMERIC(13,3)",   "grossWeight",                   _real),
             ("net_weight",                     "NUMERIC(13,3)",   "netWeight",                     _real),
             ("weight_unit",                    "VARCHAR(3)",      "weightUnit",                    _text),
-            ("cross_plant_status",             "VARCHAR(1)",      "crossPlantStatus",              _text),
+            ("cross_plant_status",             "VARCHAR(10)",     "crossPlantStatus",              _text),
             ("cross_plant_status_valid_date",  "DATE",            "crossPlantStatusValidityDate",  _date),
             ("is_marked_for_deletion",         "BOOLEAN",         "isMarkedForDeletion",           _bool),
             ("creation_date",                  "DATE",            "creationDate",                  _date),
@@ -436,7 +438,7 @@ SCHEMAS: dict[str, Any] = {
         "pk": ["product", "language"],
         "cols": [
             ("product",              "VARCHAR(40)",  "product",             _text),
-            ("language",             "VARCHAR(1)",   "language",            _text),
+            ("language",             "VARCHAR(10)",  "language",            _text),
             ("product_description",  "TEXT",         "productDescription",  _text),
         ],
     },
@@ -454,10 +456,10 @@ SCHEMAS: dict[str, Any] = {
             ("default_purchasing_organization",     "VARCHAR(4)",      "defaultPurchasingOrganization",    _text),
             ("sales_organization",                  "VARCHAR(4)",      "salesOrganization",                _text),
             ("address_id",                          "VARCHAR(10)",     "addressId",                        _text),
-            ("plant_category",                      "VARCHAR(1)",      "plantCategory",                    _text),
+            ("plant_category",                      "VARCHAR(10)",     "plantCategory",                    _text),
             ("distribution_channel",                "VARCHAR(2)",      "distributionChannel",              _text),
             ("division",                            "VARCHAR(2)",      "division",                         _text),
-            ("language",                            "VARCHAR(1)",      "language",                         _text),
+            ("language",                            "VARCHAR(10)",     "language",                         _text),
             ("is_marked_for_archiving",             "BOOLEAN",         "isMarkedForArchiving",             _bool),
         ],
     },
@@ -485,7 +487,7 @@ SCHEMAS: dict[str, Any] = {
             ("product",                        "VARCHAR(40)",  "product",                          _text),
             ("plant",                          "VARCHAR(4)",   "plant",                            _text),
             ("storage_location",               "VARCHAR(4)",   "storageLocation",                  _text),
-            ("physical_inventory_block",       "VARCHAR(1)",   "physicalInventoryBlockInd",        _text),
+            ("physical_inventory_block",       "VARCHAR(10)",  "physicalInventoryBlockInd",        _text),
             ("date_last_posted_unrestricted",  "DATE",         "dateOfLastPostedCntUnRstrcdStk",   _date),
         ],
     },
@@ -599,13 +601,15 @@ def ingest(data_dir: Path, db_name: str) -> None:
 
     # Connect to PostgreSQL
     try:
-        con = psycopg2.connect(
-            host=DB_HOST,
-            port=DB_PORT,
-            user=DB_USER,
-            password=DB_PASSWORD,
-            database=db_name,
-        )
+        # con = psycopg2.connect(
+        #     host=DB_HOST,
+        #     port=DB_PORT,
+        #     user=DB_USER,
+        #     password=DB_PASSWORD,
+        #     database=db_name,
+        # )
+
+        con = psycopg2.connect(DATABASE_URL)
         log.info("Connected to PostgreSQL database: %s", db_name)
     except psycopg2.Error as e:
         log.error("Failed to connect to PostgreSQL: %s", e)
@@ -646,22 +650,33 @@ def ingest(data_dir: Path, db_name: str) -> None:
                 unique_rows.append(row)
 
             # INSERT with ON CONFLICT for idempotency (re-running ingest is safe)
-            placeholders = ", ".join(["%s"] * len(col_names))
-            col_list     = ", ".join(col_names)
-            pk_clause    = ", ".join(pk_cols)
-            sql = (
-                f"INSERT INTO {table} ({col_list}) VALUES ({placeholders}) "
-                f"ON CONFLICT ({pk_clause}) DO UPDATE SET "
-                f"{', '.join(f'{col}=EXCLUDED.{col}' for col in col_names if col not in pk_cols)}"
-            )
-            
-            for row in unique_rows:
-                try:
-                    cur.execute(sql, row)
-                except psycopg2.Error as e:
-                    log.warning("Error inserting row into %s: %s", table, e)
-            
-            con.commit()
+            if unique_rows:
+                placeholders = ", ".join(["%s"] * len(col_names))
+                col_list     = ", ".join(col_names)
+                pk_clause    = ", ".join(pk_cols)
+                sql = (
+                    f"INSERT INTO {table} ({col_list}) VALUES ({placeholders}) "
+                    f"ON CONFLICT ({pk_clause}) DO UPDATE SET "
+                    f"{', '.join(f'{col}=EXCLUDED.{col}' for col in col_names if col not in pk_cols)}"
+                )
+                
+                # Batch insert in chunks to avoid timeout on large tables
+                chunk_size = 100
+                for i in range(0, len(unique_rows), chunk_size):
+                    chunk = unique_rows[i:i+chunk_size]
+                    try:
+                        cur.executemany(sql, chunk)
+                        con.commit()
+                    except psycopg2.Error as e:
+                        log.warning("Error inserting chunk into %s: %s", table, e)
+                        con.rollback()
+                        # Fall back to row-by-row insert
+                        for row in chunk:
+                            try:
+                                cur.execute(sql, row)
+                                con.commit()
+                            except psycopg2.Error as row_error:
+                                log.warning("Error inserting row into %s: %s", table, row_error)
 
             skipped = len(raw_records) - len(unique_rows)
             log.info(
@@ -711,13 +726,15 @@ def ingest(data_dir: Path, db_name: str) -> None:
     print("\n  JOIN PATH VALIDATION")
     print("  " + "-" * 57)
 
-    con = psycopg2.connect(
-        host=DB_HOST,
-        port=DB_PORT,
-        user=DB_USER,
-        password=DB_PASSWORD,
-        database=db_name,
-    )
+    # con = psycopg2.connect(
+    #     host=DB_HOST,
+    #     port=DB_PORT,
+    #     user=DB_USER,
+    #     password=DB_PASSWORD,
+    #     database=db_name,
+    # )
+
+    con = psycopg2.connect(DATABASE_URL)
     cur = con.cursor()
     
     checks = [

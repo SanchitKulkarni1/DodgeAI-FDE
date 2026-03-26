@@ -36,6 +36,14 @@ _DB_NAME = os.getenv("DB_NAME", "dodgeai_o2c").strip()
 _ROW_LIMIT = 200
 _TIMEOUT = 10.0  # seconds
 
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+
+if not DATABASE_URL:
+    raise EnvironmentError(
+        "DATABASE_URL environment variable not set. "
+        "Set it in .env or export it before running the application."
+    )
+
 
 def execute_sql(sql_query: str) -> list[dict]:
     """
@@ -68,14 +76,8 @@ def execute_sql(sql_query: str) -> list[dict]:
     con = None
     try:
         # Connect to PostgreSQL database
-        con = psycopg2.connect(
-            host=_DB_HOST,
-            port=_DB_PORT,
-            user=_DB_USER,
-            password=_DB_PASSWORD,
-            database=_DB_NAME,
-            connect_timeout=int(_TIMEOUT),
-        )
+        con = psycopg2.connect(DATABASE_URL, connect_timeout=int(_TIMEOUT))
+    
 
         # Use RealDictCursor to return rows as dicts
         cursor = con.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
@@ -109,14 +111,7 @@ class DBExecutor:
     def _connect(self):
         """Open connection to PostgreSQL database."""
         try:
-            self.con = psycopg2.connect(
-                host=_DB_HOST,
-                port=_DB_PORT,
-                user=_DB_USER,
-                password=_DB_PASSWORD,
-                database=_DB_NAME,
-                connect_timeout=int(_TIMEOUT),
-            )
+            self.con = psycopg2.connect(DATABASE_URL, connect_timeout=int(_TIMEOUT))
             log.info(
                 "[DBExecutor] connected to postgres://%s:%d/%s",
                 _DB_HOST,
