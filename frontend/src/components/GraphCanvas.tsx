@@ -248,6 +248,21 @@ export const GraphCanvas: React.FC<GraphCanvasProps> = ({
         return { nodes: uniqueNodes, links: allEdges };
     }, [baseNodes, baseEdges, backgroundNodes, backgroundEdges, highlightNodes, highlightEdges, expandedNodes, expandedEdges, showOverlay]);
 
+    // Configure d3 layout forces natively
+    useEffect(() => {
+        if (fgRef.current) {
+            const charge = fgRef.current.d3Force('charge');
+            if (charge) {
+                charge.strength(-300);
+                charge.distanceMax(800);
+            }
+            const link = fgRef.current.d3Force('link');
+            if (link) {
+                link.distance(350);
+            }
+        }
+    }, [dimensions.width, graphData]);
+
     // Custom node canvas painter
     const nodeCanvasObject = useCallback((node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
         const label = node.label || node.id;
@@ -345,16 +360,7 @@ export const GraphCanvas: React.FC<GraphCanvasProps> = ({
         if (node.type && !node.isBase) fields.push(['Type', node.type.replace('_', ' ').toUpperCase()]);
         
         // Entity-specific common fields from O2C schema
-        const commonMetaFields = [
-            'customer', 'sales_order', 'delivery_document', 'billing_document', 
-            'accounting_document', 'material', 'product', 'plant',
-            'sold_to_party', 'company_code', 'fiscal_year', 'gl_account',
-            'reference_document', 'cost_center', 'profit_center', 'transaction_currency',
-            'amount_in_transaction_currency', 'net_amount_in_doc_currency',
-            'posting_date', 'document_date', 'accounting_document_type',
-            'accounting_document_item', 'business_partner_full_name',
-            'net_amount', 'total_amount', 'quantity', 'delivery_status'
-        ];
+        // (Unused fields variable removed to fix TS errors)
         
         // Add any other custom properties from the node
         Object.entries(node).forEach(([key, value]) => {
@@ -399,7 +405,6 @@ export const GraphCanvas: React.FC<GraphCanvasProps> = ({
                     onNodeHover={(node: any) => {
                         setHoverNode(node);
                         if (node && containerRef.current) {
-                            const rect = containerRef.current.getBoundingClientRect();
                             const nodeScreenX = node.x ? (node.x + dimensions.width / 2) : dimensions.width / 2;
                             const nodeScreenY = node.y ? (node.y + dimensions.height / 2) : dimensions.height / 2;
                             const x = nodeScreenX < 190 ? nodeScreenX + 150 : nodeScreenX - 350;
@@ -416,9 +421,6 @@ export const GraphCanvas: React.FC<GraphCanvasProps> = ({
                     nodeRelSize={5}
                     enableNodeDrag={true}
                     enableZoomInteraction={true}
-                    d3Force="charge" d3ForceStrength={-300}
-                    linkDistance={350}
-                    distanceMax={800}
                 />
             )}
             
