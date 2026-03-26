@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Clock, Search, AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react';
+import { Send, Clock, Search, AlertTriangle } from 'lucide-react';
 import type { SyncQueryResponse } from '../api/client';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -156,7 +156,6 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ messages, isLoading, onSen
 const MessageBubble: React.FC<{ msg: Message }> = ({ msg }) => {
     const isUser = msg.role === 'user';
     const isOffTopic = msg.metadata?.retrieval_mode === 'off_topic';
-    const [planOpen, setPlanOpen] = useState(false);
 
     if (isUser) {
         return (
@@ -204,42 +203,6 @@ const MessageBubble: React.FC<{ msg: Message }> = ({ msg }) => {
                                 <Clock size={10} /> {msg.metadata.latency_ms}ms
                             </span>
                         </div>
-
-                        {/* Query Details Toggle */}
-                        {(msg.metadata.query_plan || msg.metadata.sql_query) && (
-                            <div>
-                                <button
-                                    onClick={() => setPlanOpen(!planOpen)}
-                                    className="flex items-center gap-1 text-[10px] text-gray-600 hover:text-gray-900 transition-colors"
-                                >
-                                    {planOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-                                    Query Details
-                                </button>
-                                
-                                {planOpen && (
-                                    <div className="mt-2 space-y-2.5 p-3 bg-gray-50 rounded-lg border border-gray-200">
-                                        {msg.metadata.query_plan && (
-                                            <div>
-                                                <h4 className="text-[10px] font-semibold text-gray-700 mb-1 uppercase tracking-wider">Plan</h4>
-                                                <pre className="text-[11px] text-gray-800 whitespace-pre-wrap font-mono leading-relaxed">
-                                                    {msg.metadata.query_plan}
-                                                </pre>
-                                            </div>
-                                        )}
-                                        {msg.metadata.sql_query && (
-                                            <div>
-                                                <h4 className="text-[10px] font-semibold text-gray-700 mb-1 uppercase tracking-wider">SQL</h4>
-                                                <div className="overflow-x-auto">
-                                                    <pre className="text-[11px] text-emerald-700 font-mono">
-                                                        {msg.metadata.sql_query}
-                                                    </pre>
-                                                </div>
-                                            </div>
-                                        )}
-                                    </div>
-                                )}
-                            </div>
-                        )}
                     </div>
                 )}
             </div>
