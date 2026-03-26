@@ -5,20 +5,20 @@
 ### 1. ❌ Database Tables Missing (PRIMARY ISSUE)
 **Error:** `no such table: billing_document_headers`
 
-The production PostgreSQL database is **empty**. You need to ingest the SAP data.
+The Supabase PostgreSQL database is **empty**. You need to ingest the SAP data.
 
 **Solution:**
 ```bash
-# Run locally first to test
-python ingest.py --data-dir ./sap-o2c-data --db-name dodgeai_o2c
+# Run locally to load data into Supabase
+python ingest.py --data-dir ./sap-o2c-data --db-name postgres
 
-# Or if using psycopg2 environment variables:
+# Or simply:
 python ingest.py
 ```
 
 This will:
 - Create 19 normalized tables (billing_document_headers, products, business_partners, etc.)
-- Load ~50K+ rows from JSONL files
+- Load ~50K+ rows from JSONL files into Supabase
 - Create all necessary indexes
 
 ### 2. ⚠️ ChromaDB Cloud Config Mismatch (FIXED ✅)
@@ -29,21 +29,22 @@ This will:
 - ✅ migrate_to_cloud.py (just fixed)
 - ✅ verify_chromadb.py (just fixed)
 
-### 3. ⚠️ Render Postgres Credentials (FOR PRODUCTION ONLY)
-**Issue:** Local .env has Render DB_HOST which doesn't resolve locally
+### 3. ✅ Database Configuration (FIXED ✅)
+**Was:** DB_HOST pointing to Render Postgres  
+**Now:** DB_HOST points to Supabase (for both local & production)
 
-**For Render deployment, add these environment variables in Render dashboard:**
+Both local development and Render production use **Supabase** via `DATABASE_URL`.
+
+---
+
+## Architecture
+
 ```
-DB_HOST=dpg-d7235cruibrs73cr23e0-a
-DB_PORT=5432
-DB_USER=dodgeai_o2c_user
-DB_PASSWORD=OQq3Ietbd4IOTs61uBuOHKpMctQY8YPJ
-DB_NAME=dodgeai_o2c
-CHROMA_API_KEY=ck-Atoibaf78hdHaZQBrbME3ge4VKLBWBhWJH1dQYCoEERo
-CHROMA_TENANT=b5a4c0a6-9a4d-4560-a66e-baaab5fd8546
-CHROMA_DATABASE=dodgeai-o2c
-CHROMA_USE_CLOUD=true
-REDIS_URL=redis://default:UUK4IYRGgQOZLvcaX7R13qOs80TzIf5W@redis-17737.c212.ap-south-1-1.ec2.cloud.redislabs.com:17737/0
+Local Development:      DATABASE_URL (Supabase) ← .env
+              ↓
+Render Production:      DATABASE_URL (Supabase) ← inherited from .env
+              ↓
+       Query Execution: db_executor.py uses DATABASE_URL
 ```
 
 ---
@@ -62,31 +63,52 @@ python verify_chromadb.py
 # 2. Run diagnostics
 python diagnostic.py
 
-# 3. If database is empty, ingest data
+# 3. Ingest SAP data into Supabase
 python ingest.py
+
+# 4. Verify tables were created
+# (diagnostic.py will show them)
+python diagnostic.py
 ```
 
-### ✅ Phase 2: Commit Fixes
+### ✅ Phase 2: Verify Queries Work Locally
 
 ```bash
-git add search/semantic.py migrate_to_cloud.py verify_chromadb.py diagnostic.py
-git commit -m "Fix: ChromaDB CHROMA_TENANT env var consistency + diagnostics"
-git push
+# Start server
+uvicorn main:app --reload --port 8000
+
+# In another terminal, test a query
+curl -X POST http://localhost:8000/query/sync \
+  -H "Content-Type: application/json" \
+  -d '{"query": "Show me the top 5 customers by revenue"}'
+
+# Should return data from Supabase ✅
 ```
 
-### ✅ Phase 3: Production Deployment (Render)
+### ✅ Phase 3: Deploy to Render
 
-1. **If production DB is empty:**
-   - Option A: Run migration from Render Shell: `python ingest.py`
-   - Option B: Run locally and push data to production Postgres
+1. **Commit changes:**
+   ```bash
+   git add .env diagnostic.py PRODUCTION_FIX_GUIDE.md migrate_to_cloud.py verify_chromadb.py
+   git commit -m "Fix: Use Supabase for production, fix ChromaDB config"
+   git push
+   ```
 
-2. **Verify Render environment variables are set:**
+2. **Render will auto-deploy** with same `.env` configuration (Supabase)
+
+3. **Verify Render environment variables are set:**
    - Go to Render dashboard → Your service → Environment
-   - Add all 9 env variables listed above
+   - Add these 4 vars:
+   ```
+   CHROMA_API_KEY=ck-Atoibaf78hdHaZQBrbME3ge4VKLBWBhWJH1dQYCoEERo
+   CHROMA_TENANT=b5a4c0a6-9a4d-4560-a66e-baaab5fd8546
+   CHROMA_DATABASE=dodgeai-o2c
+   CHROMA_USE_CLOUD=true
+   ```
+   - REDIS_URL and DATABASE_URL are already inherited from .env
    - Click "Save changes"
-   - Wait for auto-redeploy
 
-3. **Test production endpoint:**
+4. **Test production endpoint:**
    ```bash
    curl -X POST https://your-render-url/query/sync \
      -H "Content-Type: application/json" \
@@ -95,17 +117,30 @@ git push
 
 ---
 
+## Your Configuration
+
+| Component | Local | Production (Render) |
+|-----------|-------|-------------------|
+| Database | Supabase | Supabase (same) |
+| ChromaDB | Cloud | Cloud |
+| Redis | Remote | Remote (same) |
+| Entry Point | localhost:8000 | render.com/... |
+
+---
+
 ## Troubleshooting
 
-### If you still get "no such table" errors on Render:
+### If you still get "no such table" errors:
 
 ```bash
-# SSH into Render shell
-# Run diagnostic
+# Check if tables were created
 python diagnostic.py
 
-# If DB is empty, ingest:
+# If tables are missing, ingest data:
 python ingest.py
+
+# For Render, you can also SSH in:
+# Then run: python ingest.py
 ```
 
 ### If ChromaDB Cloud still fails:
@@ -115,14 +150,9 @@ python ingest.py
 python verify_chromadb.py
 
 # If works locally but not on Render:
-# → Check Render environment variables are actually set
-# → Restart the service manually in dashboard
+# → Check Render environment variables are set
+# → Restart the service in Render dashboard
 ```
-
-### If can't connect to Render Postgres locally:
-
-That's **normal** - Render Postgres is only accessible from Render.  
-Use local `.env` for development (already configured with Supabase).
 
 ---
 
@@ -131,14 +161,16 @@ Use local `.env` for development (already configured with Supabase).
 | Component | Status | Action |
 |-----------|--------|--------|
 | ChromaDB Config | ✅ Fixed | Commit changes |
+| Database Config | ✅ Fixed | Use Supabase (both local & prod) |
 | Database Ingestion | ❌ TODO | Run `python ingest.py` |
-| Render Env Vars | ⚠️ TODO | Add 9 vars to Render dashboard |
+| Render Env Vars | ⚠️ TODO | Add 4 vars (ChromaDB) to Render |
 | Code Deployed | ✅ Ready | Push to git |
 
 ---
 
 ## Next Steps
 
-1. **Immediately:** Run `python ingest.py` to load data
-2. **Then:** Commit and push fixes
-3. **Finally:** Update Render environment variables
+1. **Immediately:** Run `python ingest.py` to load SAP data into Supabase
+2. **Then:** Test locally with `uvicorn main:app --reload --port 8000`
+3. **Then:** Commit and push fixes
+4. **Finally:** Add 4 ChromaDB vars to Render environment
