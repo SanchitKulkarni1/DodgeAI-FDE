@@ -5,6 +5,12 @@ Each function here is a thin orchestration shell that:
   1. Reads from GraphState
   2. Calls the real implementation from its dedicated module
   3. Returns a partial GraphState dict (LangGraph merges it)
+
+Parallelization:
+  - parallel_prep_node runs build_query_plan and semantic_search in parallel
+    using ThreadPoolExecutor for non-blocking concurrent execution.
+  - This node runs after classify_node and before routing, ensuring both
+    are precomputed and reused by downstream nodes.
 """
 
 import logging
@@ -73,14 +79,76 @@ def route_node(state: GraphState) -> dict[str, Any]:
 
 
 # ===========================================================================
+# 3.5. parallel_prep_node  (NEW: parallelization optimization)
+# ===========================================================================
+
+def parallel_prep_node(state: GraphState) -> dict[str, Any]:
+    """
+    NEW: Parallelizes build_query_plan and semantic_search using threading.
+    
+    Runs AFTER classify_node and BEFORE routing. Precomputes both query_plan
+    and semantic_results using ThreadPoolExecutor for parallelization,
+    eliminating sequential LLM call overhead.
+    
+    Both planner_node and semantic_node will use these precomputed results,
+    avoiding redundant API calls.
+    
+    Input  : state["resolved_query"]
+    Output : state["query_plan"], state["semantic_results"]
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    from llm.planner import build_query_plan
+    from search.semantic import semantic_search
+    
+    resolved_query = state.get("resolved_query") or state["user_query"]
+    
+    try:
+        # Use ThreadPoolExecutor to parallelize blocking I/O operations
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            # Submit both tasks to run concurrently
+            planner_future = executor.submit(build_query_plan, resolved_query)
+            semantic_future = executor.submit(semantic_search, resolved_query, 10)
+            
+            # Wait for both to complete
+            query_plan = planner_future.result()
+            semantic_results = semantic_future.result()
+        
+        log.info(
+            "[parallel_prep_node] completed — plan_intent=%s, semantic=%d results",
+            query_plan.intent if hasattr(query_plan, 'intent') else '?',
+            len(semantic_results),
+        )
+        return {
+            "query_plan":        query_plan,
+            "semantic_results":  semantic_results,
+        }
+    except Exception as e:
+        log.error("[parallel_prep_node] parallelization failed: %s", e)
+        # Return empty results — downstream nodes will handle gracefully
+        return {
+            "query_plan":        None,
+            "semantic_results":  [],
+            "error":             f"parallel prep failed: {e}",
+        }
+
+
+# ===========================================================================
 # 4. planner_node  (SQL path, step 1 of 3)
 # ===========================================================================
 
 def planner_node(state: GraphState) -> dict[str, Any]:
     """
-    Input  : state["resolved_query"]
+    Input  : state["resolved_query"], state["query_plan"] (may be cached)
     Output : state["query_plan"] (QueryPlan Pydantic object)
+    
+    OPTIMIZATION: If query_plan is already in state (from parallel_prep_node),
+    reuse it. Otherwise, compute it now.
     """
+    # Check if already precomputed by parallel_prep_node
+    if state.get("query_plan"):
+        log.info("[planner_node] using precomputed query_plan (via parallel_prep_node)")
+        return {"query_plan": state["query_plan"]}
+    
     from llm.planner import build_query_plan
 
     resolved_query = state.get("resolved_query") or state["user_query"]
@@ -88,7 +156,7 @@ def planner_node(state: GraphState) -> dict[str, Any]:
     query_plan = build_query_plan(resolved_query)
 
     log.info(
-        "[planner_node] intent=%s tables=%s joins=%d filters=%d",
+        "[planner_node] computed query_plan — intent=%s tables=%s joins=%d filters=%d",
         query_plan.intent,
         query_plan.tables,
         len(query_plan.joins),
@@ -174,18 +242,30 @@ def execute_node(state: GraphState) -> dict[str, Any]:
 
 def semantic_node(state: GraphState) -> dict[str, Any]:
     """
-    Input  : state["resolved_query"]
+    Input  : state["resolved_query"], state["semantic_results"] (may be cached)
     Output : state["semantic_results"], state["highlight_nodes"]
+    
+    OPTIMIZATION: If semantic_results are already in state (from parallel_prep_node),
+    reuse them. Otherwise, compute them now.
     """
     from search.semantic import semantic_search
     from graph_highlighter import nodes_from_semantic_results
+
+    # Check if already precomputed by parallel_prep_node
+    if state.get("semantic_results"):
+        log.info("[semantic_node] using precomputed semantic_results (via parallel_prep_node)")
+        highlight_nodes = nodes_from_semantic_results(state["semantic_results"])
+        return {
+            "semantic_results": state["semantic_results"],
+            "highlight_nodes":  highlight_nodes,
+        }
 
     resolved_query = state.get("resolved_query") or state["user_query"]
 
     results = semantic_search(query=resolved_query, top_k=10)
     highlight_nodes = nodes_from_semantic_results(results)
 
-    log.info("[semantic_node] %d semantic results", len(results))
+    log.info("[semantic_node] computed semantic results — %d results", len(results))
     return {
         "semantic_results": results,
         "highlight_nodes":  highlight_nodes,
