@@ -46,6 +46,16 @@ _CHROMA_API_KEY   = os.getenv("CHROMA_API_KEY")
 _CHROMA_TENANT_ID = os.getenv("CHROMA_TENANT")        # ✅ FIX 1: was "CHROMA_TENANT_ID"
 _CHROMA_DATABASE  = os.getenv("CHROMA_DATABASE", "dodgeai-o2c")
 
+# Log configuration at module load
+_config_msg = (
+    f"[semantic] ChromaDB Configuration: "
+    f"USE_CLOUD={_USE_CLOUD}, "
+    f"API_KEY={'SET' if _CHROMA_API_KEY else 'MISSING'}, "
+    f"TENANT={'SET' if _CHROMA_TENANT_ID else 'MISSING'}, "
+    f"DATABASE={_CHROMA_DATABASE}"
+)
+# Will be logged after logger is configured
+
 
 # Updated: old "models/embedding-001" was deprecated Jan 14 2026
 _EMBED_MODEL = "gemini-embedding-001"
@@ -151,26 +161,53 @@ def _get_client_and_collection():
     if _client is not None and _collection is not None:
         return _client, _collection
 
+    # Log configuration on first initialization
+    log.info(_config_msg)
+
     if _USE_CLOUD:
         if not _CHROMA_API_KEY or not _CHROMA_TENANT_ID:
             log.warning(
                 "[semantic] CHROMA_USE_CLOUD=true but credentials missing. "
                 "Falling back to local ChromaDB."
             )
+            log.debug(
+                "[semantic] Missing credentials: API_KEY=%s, TENANT_ID=%s",
+                "SET" if _CHROMA_API_KEY else "MISSING",
+                "SET" if _CHROMA_TENANT_ID else "MISSING"
+            )
             _client = chromadb.PersistentClient(path=_CHROMA_PATH)
         else:
             try:
-                _client = chromadb.CloudClient(   # ✅ FIX 2: removed cloud_host param
+                # Log credentials before connection attempt
+                log.info(
+                    "[semantic] Attempting ChromaDB Cloud connection with: "
+                    "api_key=%s..., tenant=%s, database=%s",
+                    _CHROMA_API_KEY[:10] if _CHROMA_API_KEY else "NONE",
+                    _CHROMA_TENANT_ID[:20] if _CHROMA_TENANT_ID else "NONE",
+                    _CHROMA_DATABASE if _CHROMA_DATABASE else "NONE"
+                )
+                
+                _client = chromadb.CloudClient(
                     api_key=_CHROMA_API_KEY,
                     tenant=_CHROMA_TENANT_ID,
                     database=_CHROMA_DATABASE,
                 )
                 log.info(
-                    "[semantic] Connected to ChromaDB Cloud (tenant=%s..., db=%s)",
+                    "[semantic] ✅ Connected to ChromaDB Cloud (tenant=%s..., db=%s)",
                     _CHROMA_TENANT_ID[:8], _CHROMA_DATABASE
                 )
             except Exception as e:
-                log.error("[semantic] CloudClient init failed: %s. Falling back to local.", e)
+                log.error(
+                    "[semantic] ❌ CloudClient init failed: %s. "
+                    "Details: api_key_set=%s, tenant_id_set=%s, database=%s. "
+                    "Falling back to local.",
+                    str(e),
+                    "YES" if _CHROMA_API_KEY else "NO",
+                    "YES" if _CHROMA_TENANT_ID else "NO",
+                    _CHROMA_DATABASE
+                )
+                import traceback
+                log.debug("[semantic] Full traceback: %s", traceback.format_exc())
                 _client = chromadb.PersistentClient(path=_CHROMA_PATH)
     else:
         _client = chromadb.PersistentClient(path=_CHROMA_PATH)
