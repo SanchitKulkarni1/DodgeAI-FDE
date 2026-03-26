@@ -33,7 +33,7 @@ _COLLECTION  = "o2c_entities"
 # ChromaDB configuration: use cloud if enabled, otherwise local
 _USE_CLOUD = os.getenv("CHROMA_USE_CLOUD", "false").lower() == "true"
 _CHROMA_API_KEY = os.getenv("CHROMA_API_KEY")
-_CHROMA_TENANT_ID = os.getenv("CHROMA_TENANT_ID")
+_CHROMA_TENANT_ID = os.getenv("CHROMA_TENANT")
 _CHROMA_DATABASE = os.getenv("CHROMA_DATABASE", "dodgeai-o2c")
 _CHROMA_HOST = os.getenv("CHROMA_HOST", "api.trychroma.com")
 
