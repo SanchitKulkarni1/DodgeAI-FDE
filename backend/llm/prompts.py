@@ -7,11 +7,6 @@ planner, sql_generator, and answer_writer system prompts so the LLM never
 generates SQL filters for 2024 / Q4 which return 0 rows.
 """
 
-# ---------------------------------------------------------------------------
-# FIX #5 — Dataset constraints block.
-# Injected into every LLM system prompt that touches SQL or dates.
-# ---------------------------------------------------------------------------
-
 DATA_CONSTRAINTS = """
 ========== DATASET CONSTRAINTS — READ BEFORE GENERATING ANY SQL ==========
 
@@ -61,14 +56,10 @@ FINANCIAL RANGES (for sanity-checking SQL results):
   - total active billing revenue  : ~INR 30,000 across all 83 active docs
 """
 
-# ---------------------------------------------------------------------------
-# Complete schema description with all join paths.
-# ---------------------------------------------------------------------------
-
 DB_SCHEMA = DATA_CONSTRAINTS + """
 DATABASE: PostgreSQL  (dodgeai_o2c)
 ALL amounts are REAL. ALL dates are TEXT in 'YYYY-MM-DD' format.
-Booleans are stored as BOOLEAN: use TRUE or FALSE.
+Booleans are stored as BOOLEAN in PostgreSQL: ALWAYS use TRUE or FALSE (never 0, 1, '0', '1').
 
 ========== CORE O2C FLOW ==========
 
@@ -133,7 +124,9 @@ TABLE: billing_document_headers
   billing_document         TEXT  PRIMARY KEY  (e.g. '90504248')
   billing_document_type    TEXT  ('F2' = standard invoice, 'S1' = cancellation)
   billing_document_date    TEXT
-  billing_doc_is_cancelled INTEGER  (1 = cancelled, 0 = active)
+  billing_doc_is_cancelled BOOLEAN  (TRUE = cancelled, FALSE = active)
+                                    *** ALWAYS use TRUE/FALSE, never 0/1 ***
+                                    *** For revenue queries: WHERE billing_doc_is_cancelled = FALSE ***
   cancelled_billing_document TEXT  (NULL or empty string if not a cancellation)
   total_net_amount         REAL
   transaction_currency     TEXT
@@ -154,7 +147,7 @@ TABLE: billing_document_items
 
 TABLE: billing_document_cancellations
   (same columns as billing_document_headers — contains ONLY cancelled docs)
-  billing_doc_is_cancelled = 1 always
+  billing_doc_is_cancelled = TRUE always
 
 TABLE: journal_entry_items_ar
   company_code               TEXT
@@ -191,7 +184,8 @@ TABLE: business_partners
   business_partner       TEXT  PRIMARY KEY  (same value as customer)
   customer               TEXT  (same as business_partner — use this for joins)
   business_partner_full_name TEXT  (e.g. 'Nelson, Fitzpatrick and Jordan')
-  is_blocked             INTEGER
+  is_blocked             BOOLEAN  (TRUE = blocked, FALSE = active)
+                                  *** ALWAYS use TRUE/FALSE, never 0/1 ***
 
 TABLE: business_partner_addresses
   business_partner  TEXT  → business_partners.business_partner

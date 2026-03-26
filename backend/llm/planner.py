@@ -79,8 +79,6 @@ def extract_and_clean_json(text: str) -> str:
                         break
         
         if json_end < 0:
-            # The JSON was truncated — brackets never closed.
-            # Raise immediately so the retry loop gets a clear signal.
             raise ValueError(
                 f"LLM response was truncated (JSON never closed). "
                 f"Response length: {len(text)} chars. "
@@ -95,7 +93,7 @@ def extract_and_clean_json(text: str) -> str:
     return text
 
 _SYSTEM = f"""\
-You are a query planner for an Order-to-Cash (O2C) SQLite database.
+You are a query planner for an Order-to-Cash (O2C) PostgreSQL database.
 
 Your job: Convert a natural language question into a STRUCTURED JSON query plan.
 
@@ -104,6 +102,8 @@ STRICT RULES (mandatory):
 2. Use ONLY tables, columns, and joins from the schema below
 3. DO NOT invent fields, columns, or joins
 4. Always include "reasoning" explaining the plan (for debugging)
+5. This is a PostgreSQL database — use PostgreSQL syntax and types.
+   BOOLEAN columns use TRUE/FALSE (never 0 or 1).
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 REQUIRED OUTPUT SHAPE (copy this structure exactly):
@@ -240,7 +240,6 @@ def build_query_plan(query: str) -> QueryPlan:
     """
     last_error = None
 
-    # Up to 2 attempts — on failure, include a structured correction prompt
     for attempt in range(1, 3):
         try:
             if attempt == 1:
@@ -257,7 +256,8 @@ def build_query_plan(query: str) -> QueryPlan:
                     f"   - 'on' is the full join condition string e.g. 'billing_document_items.billing_document = billing_document_headers.billing_document'\n"
                     f"2. 'tables', 'intent', and 'reasoning' are ALL required top-level fields\n"
                     f"3. 'filters' operator must be one of: =, IN, >, <, >=, <=, BETWEEN, IS NULL (NOT 'LIKE')\n"
-                    f"4. Return ONLY the complete JSON object — no truncation, no markdown.\n"
+                    f"4. For BOOLEAN filters use false/true (JSON booleans), not 0/1 or strings.\n"
+                    f"5. Return ONLY the complete JSON object — no truncation, no markdown.\n"
                 )
 
             response = gemini.models.generate_content(
@@ -266,35 +266,27 @@ def build_query_plan(query: str) -> QueryPlan:
                 config=types.GenerateContentConfig(
                     system_instruction=_SYSTEM,
                     temperature=0.0,
-                    max_output_tokens=15000,  # Increased from 6000 to prevent truncation on first attempt
+                    max_output_tokens=15000,
                 ),
             )
 
             response_text = response.text.strip()
-            
-            # Clean and extract JSON from response
             response_text = extract_and_clean_json(response_text)
-            
-            # Parse JSON
+
             try:
                 plan_dict = json.loads(response_text)
             except json.JSONDecodeError as e:
                 log.error(f"[planner] JSON parsing failed on attempt {attempt}: {e}")
                 log.error(f"[planner] cleaned response: {response_text[:300]}")
                 raise
-            
-            # Validate with Pydantic
+
             plan = QueryPlan(**plan_dict)
-            
-            # ─────────────────────────────────────────────────────────────────────
-            # Validate all joins against known paths
-            # ─────────────────────────────────────────────────────────────────────
-            
+
             for join in plan.joins:
                 is_valid, reason = validate_join_against_known_paths(join)
                 if not is_valid:
                     raise ValueError(f"Invalid join: {reason}")
-            
+
             log.info(
                 f"[planner] attempt {attempt} succeeded — "
                 f"intent={plan.intent}, tables={plan.tables}, joins={len(plan.joins)}"

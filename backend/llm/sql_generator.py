@@ -4,7 +4,7 @@ llm/sql_generator.py — Natural language + query plan → validated PostgreSQL 
 generate_sql() uses the query plan from planner.py to produce a single
 PostgreSQL SELECT statement. The output is:
   1. Extracted from the LLM response (strips markdown fences)
-  2. Syntax-validated against the local SQLite DB using EXPLAIN (as proxy)
+  2. Syntax-validated against the schema (no SQLite EXPLAIN — PostgreSQL only)
   3. Returned as a clean SQL string, or raises ValueError on bad SQL
 
 Key prompt constraints enforced:
@@ -16,7 +16,6 @@ Key prompt constraints enforced:
 
 import logging
 import re
-import sqlite3
 import json
 from llm.client import gemini, MODEL, types
 from llm.prompts import DB_SCHEMA
@@ -24,9 +23,6 @@ from db.schema_validator import validate_sql_against_schema, report_sql_issues
 from llm.query_plan import QueryPlan
 
 log = logging.getLogger(__name__)
-
-# Path to the SQLite DB for syntax validation
-_DB_PATH = "o2c.db"
 
 _SYSTEM = f"""\
 You are a PostgreSQL SQL generator for an Order-to-Cash (O2C) database.
@@ -57,7 +53,7 @@ CRITICAL RULES (strictly enforced by validator):
      Write  = FALSE  or  = TRUE  (never = 0, = 1, = 'FALSE', or = 'TRUE').
 
 DON'T OVERTHINK: The query plan already has done the hard work (tables, joins, filters).
-Your job is just to convert it to valid SQL.
+Your job is just to convert it to valid PostgreSQL SQL.
 
 {DB_SCHEMA}
 """
@@ -67,15 +63,13 @@ def _normalize_boolean_literals(sql: str) -> str:
     """
     Normalize SQLite-style boolean integer comparisons to PostgreSQL boolean literals.
 
-    PostgreSQL stores BOOLEAN columns as true/false, not 0/1. The LLM (trained
-    on the SQLite schema) often generates:
+    PostgreSQL stores BOOLEAN columns as true/false, not 0/1. The LLM sometimes generates:
         billing_doc_is_cancelled = 0   → should be: billing_doc_is_cancelled = FALSE
         billing_doc_is_cancelled = 1   → should be: billing_doc_is_cancelled = TRUE
         billing_doc_is_cancelled = 'FALSE' → should be: billing_doc_is_cancelled = FALSE
 
     This function rewrites those patterns so the SQL runs correctly on PostgreSQL.
     """
-    # Boolean columns in the schema that are stored as BOOLEAN in PostgreSQL
     BOOL_COLUMNS = [
         "billing_doc_is_cancelled",
         "is_blocked",
@@ -120,23 +114,19 @@ def _extract_sql(text: str) -> str:
 
     # Detect truncation — SQL ending mid-keyword (incomplete clause)
     if sql and len(sql) > 50:
-        # If query ends with incomplete clause indicators
-        ends_with = sql.rstrip()[-3:].upper()
         if any(sql.rstrip().endswith(c) for c in ('=', ' AND', ' OR', ' ON', ' WHERE', ' b')):
-            # Likely truncated (ends with single letter or incomplete clause)
             raise ValueError(f"Truncated SQL detected: query ends incomplete at: ...{sql[-30:]}")
-    
+
     return sql
 
 
 def _validate_sql(sql: str) -> None:
     """
-    Validate SQL against schema constraints AND EXPLAIN syntax.
-    
-    PATH 1: Enhanced validation approach
-    1. Check schema (tables, columns, join paths, NULL columns)
-    2. Check syntax with EXPLAIN
-    
+    Validate SQL against schema constraints only (PostgreSQL — no SQLite EXPLAIN).
+
+    1. Reject non-SELECT statements
+    2. Check schema (tables, columns, join paths)
+
     Raises ValueError with detailed error messages for LLM retry.
     """
     # Reject non-SELECT statements outright
@@ -144,24 +134,11 @@ def _validate_sql(sql: str) -> None:
     if first_word not in ("SELECT", "WITH"):
         raise ValueError(f"Non-SELECT statement rejected: {first_word}")
 
-    # ─────────────────────────────────────────────────────────────────────
-    # NEW: Schema validation (before EXPLAIN to catch logical errors)
-    # ─────────────────────────────────────────────────────────────────────
-    
+    # Schema validation (catches wrong table/column names before hitting Postgres)
     is_valid, errors = validate_sql_against_schema(sql)
     if not is_valid:
         error_msg = "\n".join(errors)
         raise ValueError(f"Schema validation failed:\n{error_msg}")
-    
-    # ─────────────────────────────────────────────────────────────────────
-    # EXISTING: Syntax validation with EXPLAIN
-    # ─────────────────────────────────────────────────────────────────────
-
-    con = sqlite3.connect(_DB_PATH)
-    try:
-        con.execute(f"EXPLAIN {sql}")
-    finally:
-        con.close()
 
 
 def generate_sql(query: str, query_plan: QueryPlan) -> str:
@@ -178,9 +155,8 @@ def generate_sql(query: str, query_plan: QueryPlan) -> str:
     Raises:
         ValueError: If the generated SQL fails validation after retries.
     """
-    # Convert QueryPlan to structured format for LLM
     plan_json = json.dumps(query_plan.model_dump(), indent=2)
-    
+
     prompt = (
         f"Question: {query}\n\n"
         f"Query Plan (JSON):\n{plan_json}\n\n"
@@ -189,7 +165,6 @@ def generate_sql(query: str, query_plan: QueryPlan) -> str:
 
     last_error = None
 
-    # Up to 2 attempts — on failure, include the error in the retry prompt
     for attempt in range(1, 3):
         try:
             contents = prompt
@@ -218,7 +193,7 @@ def generate_sql(query: str, query_plan: QueryPlan) -> str:
             log.info("[sql_gen] attempt %d succeeded  sql=%r", attempt, sql[:120])
             return sql
 
-        except (sqlite3.Error, ValueError) as e:
+        except (ValueError,) as e:
             last_error = str(e)
             log.warning("[sql_gen] attempt %d failed: %s", attempt, last_error)
 
