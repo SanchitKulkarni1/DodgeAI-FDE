@@ -23,6 +23,7 @@ from graph.graph import build_graph          # LangGraph compiled graph
 from graph.state import GraphState           # TypedDict for shared state
 from db_executor import get_executor         # Safe read-only SQL runner
 from search.semantic import SemanticIndex    # ChromaDB wrapper
+import cache                                 # Redis caching layer
 # ─────────────────────────────────────────────────────────────────────────────
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)s  %(message)s")
@@ -56,6 +57,10 @@ async def lifespan(app: FastAPI):
     # 3. Open read-only PostgreSQL connection
     logger.info("  ↳ Opening read-only PostgreSQL connection …")
     _db_executor = get_executor()
+
+    # 4. Verify Redis caching (optional but recommended)
+    redis_status = "✅ available" if cache.REDIS_AVAILABLE else "⚠️ unavailable (caching disabled)"
+    logger.info("  ↳ Redis cache %s", redis_status)
 
     logger.info("✅  Startup complete — ready to accept requests.")
     yield
@@ -184,6 +189,39 @@ async def health():
         "graph_loaded": _graph is not None,
         "semantic_index_loaded": _semantic_index is not None,
         "db_executor_ready": _db_executor is not None,
+    }
+
+
+@app.get("/cache/stats", tags=["Cache"])
+async def cache_stats():
+    """
+    Returns Redis cache statistics for monitoring.
+    Useful for: observing cache hit rate, debugging, performance tuning.
+    """
+    stats = cache.get_cache_stats()
+    return {
+        "cache": stats,
+        "ttl_config": {
+            "aggregation": cache.CACHE_TTL["aggregation"],
+            "sql": cache.CACHE_TTL["sql"],
+            "semantic": cache.CACHE_TTL["semantic"],
+            "hybrid": cache.CACHE_TTL["hybrid"],
+            "default": cache.CACHE_TTL["default"],
+        },
+    }
+
+
+@app.delete("/cache/clear", tags=["Cache"])
+async def cache_clear():
+    """
+    Clear all DodgeAI-related cache entries from Redis.
+    Use this to force fresh queries or after schema changes.
+    WARNING: This invalidates all cached results globally.
+    """
+    cleared = cache.clear_cache()
+    return {
+        "status": "cleared" if cleared else "failed",
+        "redis_available": cache.REDIS_AVAILABLE,
     }
 
 

@@ -8,3 +8,4 @@ chromadb==0.4.21
 psycopg2-binary==2.9.9
 python-dotenv==1.0.0
 google-genai
+redis>=4.0.0

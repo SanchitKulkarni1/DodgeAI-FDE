@@ -65,6 +65,25 @@ class GeminiRoundRobinClient:
                     else:
                         raise e
 
+        def embed_content(self, *args, **kwargs):
+            """Embed content using Gemini embeddings with rate limit handling."""
+            attempts = 0
+            max_attempts = len(self.parent._keys)
+            
+            while attempts < max_attempts:
+                try:
+                    return self.parent._client.models.embed_content(*args, **kwargs)
+                except APIError as e:
+                    # 429 Resource Exhausted (Rate limits)
+                    if e.code == 429:
+                        attempts += 1
+                        if attempts >= max_attempts:
+                            log.error("All Gemini API keys exhausted their rate limits for embeddings.")
+                            raise e
+                        self.parent._rotate_key()
+                    else:
+                        raise e
+
 gemini = GeminiRoundRobinClient(api_keys)
 
 log.info("google-genai round-robin client initialised with %d keys, model=%s", len(api_keys), MODEL)
