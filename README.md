@@ -1,103 +1,147 @@
 # DodgeAI FDE — AI-Powered Natural Language Query System for SAP O2C Data
 
-> Convert natural language questions into structured SQL queries using AI, vector search, and graph-based orchestration.
+## 🌐 Live Demo
 
-**Status:** ✅ Production-Ready | **Database:** Supabase PostgreSQL | **Vector DB:** ChromaDB Cloud | **LLM:** Google Gemini
+**Try it now:** [https://dodgeai-o2c-eta.vercel.app/](https://dodgeai-o2c-eta.vercel.app/)
+
+### **Demo Features**
+- ✅ Interactive chat interface
+- ✅ Real-time graph visualization  
+- ✅ SAP O2C dataset (19 tables, 50K+ records)
+- ✅ Try queries like:
+  - "Show me the top 5 customers by revenue"
+  - "What are the delivery delays this month?"
+  - "Analyze billing patterns"
+  - "Which products are most frequently ordered?"
+
+
+> Convert natural language questions into structured SQL queries using **AI-orchestrated LangGraph**, **vector search**, and **real-time graph visualization**.
+
+**Status:** ✅ Production-Ready | **Frontend:** [Vercel Demo](https://dodgeai-o2c-eta.vercel.app/) | **Backend:** FastAPI + LangGraph | **Database:** PostgreSQL | **Vector DB:** ChromaDB | **LLM:** Google Gemini
 
 ---
 
 ## 🎯 Overview
 
-DodgeAI FDE (Forward Deployed Engineer) is an intelligent query system that enables business users to ask natural language questions about their SAP Order-to-Cash (O2C) data. The system intelligently routes queries between semantic search and SQL generation, combining the strengths of both approaches.
+DodgeAI FDE (Forward Deployed Engineer) is an **intelligent business analytics platform** that enables non-technical users to ask natural language questions about their SAP Order-to-Cash (O2C) data. Built with **LangGraph orchestration**, the system intelligently classifies user intent, routes queries to optimal retrieval paths, and visualizes results in an interactive knowledge graph.
 
-**Example Query:**
+### Real-World Use Case
 ```
-"Show me the top 5 customers by revenue"
-↓
-AI classifies as SQL aggregation
-↓
-LLM generates: SELECT customer, SUM(revenue) GROUP BY customer LIMIT 5
-↓
-Returns: Structured results with visualizations
-```
-
----
-
-## 🏗️ Architecture
-
-### **System Components**
-
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         Frontend (Coming Soon)                      │
-│                  (React UI for query input/results)                 │
-└────────────────────────┬────────────────────────────────────────────┘
-                         │ HTTP/JSON
-                         ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                    FastAPI Backend (Port 8000)                      │
-│                                                                     │
-│  ┌──────────────────────────────────────────────────────────────┐  │
-│  │              LangGraph Orchestration Pipeline               │  │
-│  │                                                              │  │
-│  │  memory_node → classify_node → parallel_prep_node          │  │
-│  │                                       ↓                      │  │
-│  │                                  route_node                 │  │
-│  │                                  /   |    \                 │  │
-│  │                         SQL      SEM   HYB   SHORT_CIRCUIT  │  │
-│  │                           ↓      ↓     ↓      ↓             │  │
-│  │                      planner  semantic hybrid answer        │  │
-│  │                           ↓      ↓     ↓                    │  │
-│  │                      sql_gen  (+caching) → answer_node      │  │
-│  │                           ↓                    ↓             │  │
-│  │                        execute                 ↓             │  │
-│  └──────────────────────────────────────────────────────────────┘  │
-│                                                                     │
-│                        Data Layer (Supabase)                        │
-│  ├─ PostgreSQL (19 tables, 50K+ rows)                              │
-│  ├─ ChromaDB Cloud (510 embeddings, semantic search)               │
-│  ├─ Redis (query caching, 5-10 min TTL)                           │
-│  └─ Gemini LLM API (4 keys, rate limit rotation)                   │
-└─────────────────────────────────────────────────────────────────────┘
+Business User: "Show me the top 5 customers by revenue generated this quarter"
+                                    ↓
+System Analysis: Detects aggregation intent (SQL needed)
+                                    ↓
+LangGraph Pipeline: Query classification → Query planning → SQL generation
+                                    ↓
+Execution: Retrieves structured results + highlights relevant graph entities
+                                    ↓
+UI Rendering: Table results + Interactive O2C graph highlighting customer→order→billing→payment flow
 ```
 
 ---
 
-## 🔄 Query Workflow
+## 🏗️ System Architecture
 
-### **Step 1: Input & Memory Check**
-```
-User Query → memory_node
-```
-- Stores previous queries for context
-- Maintains conversation history
+### **High-Level System Design**
 
-### **Step 2: Intent Classification**
 ```
-memory_node → classify_node
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                                   FRONTEND                                   │
+│                    (React 19 | TypeScript | Tailwind CSS)                   │
+│                                                                              │
+│  ┌─────────────────────────────┐  ┌────────────────────────────────────┐   │
+│  │      ChatPanel              │  │      GraphCanvas                   │   │
+│  │  ├─ Message interface       │  │  ├─ Force-directed graph layout    │   │
+│  │  ├─ Query suggestions       │  │  ├─ Entity color coding (O2C)     │   │
+│  │  ├─ Result formatting       │  │  ├─ Query result highlighting     │   │
+│  │  └─ Markdown rendering      │  │  └─ Interactive node expansion    │   │
+│  └─────────────────────────────┘  └────────────────────────────────────┘   │
+│                                                                              │
+│                            Via Axios HTTP Client                             │
+└──────────────┬───────────────────────────────────────────────────────────────┘
+               │ POST /query/sync, GET /graph/sample
+               │
+┌──────────────▼───────────────────────────────────────────────────────────────┐
+│                         BACKEND: FastAPI Server                              │
+│                           (Port 8000 | Python 3.10+)                         │
+│                                                                              │
+│  ┌────────────────────────────────────────────────────────────────────────┐ │
+│  │                    LangGraph Orchestration Pipeline                    │ │
+│  │                                                                        │ │
+│  │  ENTRY_POINT                                                          │ │
+│  │      ↓                                                                │ │
+│  │  memory_node                (Resolve user references & context)       │ │
+│  │      ↓                                                                │ │
+│  │  classify_node              (Intent classification & routing mode)    │ │
+│  │      ↓                                                                │ │
+│  │  parallel_prep_node         (⚡ Parallel: query_plan + semantic)      │ │
+│  │      ↓                                                                │ │
+│  │  route_node                 (Conditional routing)                     │ │
+│  │      ↙    ↓    ↘                                                      │ │
+│  │   SQL  SEM  HYBRID          (Three execution paths)                   │ │
+│  │      ↓    ↓    ↓                                                      │ │
+│  │  planner / semantic_node / hybrid_node                               │ │
+│  │      ↓    ↓    ↓                                                      │ │
+│  │  sql_gen (reuses cached results)                                      │ │
+│  │      ↓                                                                │ │
+│  │  execute_node               (Read-only SQL execution)                 │ │
+│  │      ↓                                                                │ │
+│  │  answer_node                (Format response + graph highlighting)    │ │
+│  │                                                                        │ │
+│  └────────────────────────────────────────────────────────────────────────┘ │
+│                                                                              │
+│  ┌────────────────────────────────────────────────────────────────────────┐ │
+│  │                        Service Modules                                 │ │
+│  │                                                                        │ │
+│  │  ├─ Classifier (llm/classifier.py): Intent detection                  │ │
+│  │  ├─ Query Planner (llm/planner.py): Decompose user intent            │ │
+│  │  ├─ SQL Generator (llm/sql_generator.py): Schema-aware SQL synthesis │ │
+│  │  ├─ Semantic Search (search/semantic.py): ChromaDB + embeddings      │ │
+│  │  ├─ Answer Writer (llm/answer_writer.py): Natural language response  │ │
+│  │  ├─ Graph Highlighter (graph_highlighter.py): Query result mapping   │ │
+│  │  └─ Cache Manager (cache.py): Redis caching layer                    │ │
+│  │                                                                        │ │
+│  └────────────────────────────────────────────────────────────────────────┘ │
+│                                                                              │
+└──────────────┬───────────────────────────────────────────────────────────────┘
+               │
+       ┌───────┴─────────┬──────────────┬──────────────┐
+       │                 │              │              │
+    ┌──▼────────┐  ┌─────▼────┐  ┌──────▼────┐  ┌─────▼────┐
+    │PostgreSQL │  │ ChromaDB  │  │   Redis   │  │ Gemini   │
+    │           │  │           │  │           │  │   API    │
+    │ 19 Tables │  │ 510 Emb.  │  │  Cache    │  │ (4 keys) │
+    │ 50K+ rows │  │ Semantic  │  │  <10min   │  │          │
+    └───────────┘  └───────────┘  └───────────┘  └──────────┘
 ```
-**Classification options:**
-- `domain` → SQL (structured aggregate/filter)
-- `semantic` → Vector search (product names, descriptions)
-- `short_circuit` → Simple facts (no computation)
 
-**Example:** "Top 5 customers by revenue" → `domain` (SQL needed)
+---
 
-### **Step 3: Parallel Preparation** ⚡
-```
-classify_node → parallel_prep_node (ThreadPoolExecutor)
-                ├─ planner (generates query plan)
-                └─ semantic_search (retrieves documents)
-```
-**30-50% latency reduction** by running both concurrently
+## 🔄 Query Execution Flow
 
-### **Step 4: Dynamic Routing**
+### **Step 1: User Input & Memory Reconstruction**
 ```
-parallel_prep_node → route_node
-                     ├─ SQL Path (domain)
-                     ├─ Semantic Path (semantic)
-                     ├─ Hybrid Path (both)
-                     └─ Short-circuit (answer directly)
+🔹 memory_node (llm/memory.py)
+├─ Receives: User query + conversation_history
+├─ Action: Resolves pronouns and references using LLM
+├─ Output: query_context (enriched with conversation)
+└─ Example:
+   User 1: "Show top customers"
+   User 2: "Which orders?" ← System resolves: "orders for top customers"
+```
+
+### **Step 2: Intent Classification & Route Determination**
+```
+🔹 classify_node (llm/classifier.py)
+├─ Receives: query_context
+├─ Action: Binary classification via Gemini:
+│   ├─ Intent Check: Is query about O2C data? (domain guard)
+│   └─ Retrieval Mode: SQL | Semantic | Hybrid | Off-topic?
+├─ Examples:
+│   - "Top 5 customers by revenue" → intent=domain, mode=SQL
+│   - "What products are expensive?" → intent=domain, mode=Semantic
+│   - "What's the weather?" → intent=off_topic → short-circuit
+└─ Output: {intent, retrieval_mode}
 ```
 
 ### **Step 5: Execution**
@@ -469,13 +513,271 @@ CHROMA_USE_CLOUD=true
 REDIS_URL=redis://default:pwd@host:port/db
 ```
 
-**LLM (Gemini)**
+**Gemini LLM APIs**
 ```
 GEMINI_API_KEY_1=AIzaSy...
 GEMINI_API_KEY_2=AIzaSy...
 GEMINI_API_KEY_3=AIzaSy...
 GEMINI_API_KEY_4=AIzaSy...
+LLMS_MODELS=gemini-2.0-flash
 ```
+
+---
+
+## 🎨 Frontend Architecture
+
+### **Technology Stack**
+- **Framework:** React 19 + TypeScript
+- **Styling:** Tailwind CSS 3
+- **Build Tool:** Vite
+- **Graph Visualization:** react-force-graph-2d
+- **Markdown:** react-markdown
+- **HTTP Client:** Axios
+
+### **Component Hierarchy**
+
+```
+App.tsx (Main Container)
+│
+├─ Holds state:
+│  ├─ messages: Message[]         (Chat history)
+│  ├─ backgroundNodes/Edges       (Full O2C schema graph)
+│  ├─ highlightNodes/Edges        (Query result highlights)
+│  └─ expandedNodes/Edges         (Node expansion details)
+│
+├─ ChatPanel.tsx
+│  ├─ Props: messages, isLoading, onSendMessage
+│  ├─ Components:
+│  │  ├─ Message list (Markdown rendered)
+│  │  ├─ Suggested prompts
+│  │  ├─ User input box
+│  │  └─ Metadata display (retrieval mode, latency, SQL)
+│  └─ Events:
+│     ├─ onSendMessage → triggers API call
+│     └─ onExpandNode → fetch related entities
+│
+└─ GraphCanvas.tsx
+   ├─ Props: nodes, edges, highlightNodes, onNodeClick
+   ├─ Features:
+   │  ├─ Force-directed physics simulation
+   │  ├─ Entity color coding (7 entity types)
+   │  ├─ Semantic positioning (O2C flow visualization)
+   │  ├─ Hover tooltips + node info
+   │  └─ Click-to-expand interactions
+   └─ Rendering:
+      ├─ Background graph (gray, transparent)
+      ├─ Query highlights (bright colors)
+      └─ Node labels (font-sized by centrality)
+```
+
+### **Frontend-Backend Communication Flow**
+
+```
+USER ACTION (via ChatPanel)
+    ↓
+handleSendMessage()
+    ├─ Store user msg in state
+    ├─ Prepare conversation_history (last 6 turns)
+    └─ Call: apiClient.querySync(query, history)
+            ↓
+        POST /query/sync (FastAPI Backend)
+            ↓
+        Backend LangGraph Pipeline (3-4s)
+            ├─ Classify intent
+            ├─ Route to SQL/Semantic/Hybrid
+            ├─ Execute query
+            └─ Return: {answer, highlight_nodes, highlight_edges, latency_ms}
+            ↓
+    setHighlightNodes(response.highlight_nodes)
+    setHighlightEdges(response.highlight_edges)
+    setMessages(prev => [...prev, assistantMsg])
+            ↓
+GraphCanvas Re-renders
+    ├─ Background graph (unchanged)
+    ├─ Query results highlighted in bold colors
+    ├─ Related O2C entities shown
+    └─ Force simulation updates positions
+```
+
+### **Response Payload Structure**
+
+```typescript
+interface SyncQueryResponse {
+  answer: string;                    // Natural language response
+  retrieval_mode: "sql" | "semantic" | "hybrid" | "off_topic";
+  query_plan: string | null;         // Reasoning for SQL
+  sql_query: string | null;          // Generated SQL
+  highlight_nodes: GraphNode[];      // Entities to show on graph
+  highlight_edges: GraphEdge[];      // Relationships to show
+  latency_ms: number;                // Total time
+  error: string | null;              // Error message if any
+}
+```
+
+### **Data Visualization Strategy**
+
+**Graph Entities (Color-coded):**
+- 🟠 Orders/SalesOrders (Orange)
+- 🟢 Deliveries (Green)
+- 🔵 Invoices/Billing (Blue)
+- 🟣 Payments (Purple)
+- 🔷 Customers (Cyan)
+- 🟡 Products (Yellow)
+- ⚫ Addresses (Gray)
+
+**Query Highlights:**
+- Size: Based on centrality in results
+- Opacity: Low (background) → High (results)
+- Animation: Force-directed graph recalculates on each query
+
+---
+
+## 🔗 Backend-Frontend Integration Points
+
+### **1. Query Submission Flow**
+
+**Frontend (ChatPanel.tsx)**
+```typescript
+const handleSendMessage = async (query: string) => {
+  const history = messages.map(m => m.content);
+  const response = await apiClient.querySync({query, conversation_history: history});
+  
+  // Update UI with response
+  setHighlightNodes(response.highlight_nodes);
+  setHighlightEdges(response.highlight_edges);
+};
+```
+
+**Backend (main.py - POST /query/sync)**
+```python
+@app.post("/query/sync", response_model=SyncQueryResponse)
+async def query_sync(request: QueryRequest) -> SyncQueryResponse:
+    """
+    Main query entry point.
+    1. Execute LangGraph pipeline
+    2. Format response for frontend
+    3. Highlight relevant entities
+    """
+    input_state = GraphState(
+        messages=request.conversation_history + [request.query],
+        user_query=request.query
+    )
+    output = _graph.invoke(input_state)
+    return format_response(output)  # → highlights, answer, metadata
+```
+
+### **2. Graph Visualization Integration**
+
+**Backend (graph/graph.py)**
+- Builds 38-node LangGraph DAG
+- Each node represents a processing step
+- Edges show data flow between nodes
+
+**Frontend (GraphCanvas.tsx)**
+```typescript
+// Background graph (full schema)
+const loadSampleGraph = async () => {
+  const data = await apiClient.getGraphSample(50);  // Load 50 entities
+  setBackgroundNodes(data.nodes);
+  setBackgroundEdges(data.edges);
+};
+
+// Highlight query results
+graphData.nodes[nodeId].color = getEntityColor(nodeType);
+graphData.nodes[nodeId].size = 8;  // Make result nodes larger
+```
+
+### **3. Result Transformation**
+
+**Backend → Frontend:**
+```
+Raw SQL Results
+    ↓ (graph_highlighter.py)
+Map to Schema Entities
+    ↓ (Find customer → product → order relationships)
+Extract Node IDs & Edges
+    ↓
+{
+  highlight_nodes: [{id: "cust_123", type: "Customer", label: "Acme Corp"}, ...],
+  highlight_edges: [{source: "cust_123", target: "ord_456"}, ...],
+  answer: "Acme Corp placed 15 orders totaling $500K"
+}
+    ↓
+Frontend
+    ↓
+GraphCanvas renders with colored nodes/edges
+ChatPanel displays answer text + metadata
+```
+
+### **4. Conversation History Management**
+
+**Frontend (App.tsx)**
+- Maintains message array: `[user_msg_1, asst_msg_1, user_msg_2, asst_msg_2, ...]`
+- Sends last 6 turns to backend for context
+
+**Backend (llm/memory.py)**
+- Uses Gemini to resolve pronouns in current query
+- Example: "Show details" after "Who is the top customer?" → resolves to "Show details for top customer"
+
+### **5. Error Handling**
+
+**Frontend:**
+```typescript
+if (response.error) {
+  setMessages(prev => [...prev, {
+    role: 'assistant',
+    content: `⚠️ Error: ${response.error}`
+  }]);
+}
+```
+
+**Backend:**
+```python
+try:
+    output = _graph.invoke(input_state)
+except Exception as e:
+    logger.error(f"Pipeline error: {e}")
+    return SyncQueryResponse(
+        answer="I encountered an error processing your query.",
+        error=str(e),
+        retrieval_mode="unknown"
+    )
+```
+
+---
+
+## 🎯 Key Takeaways
+
+### **System Design**
+- **Modular:** Separate concerns (Graph orchestration, LLM services, Data access)
+- **Observable:** Detailed logging and diagnostics
+- **Scalable:** Caching, parallelization, connection pooling
+- **Safe:** Read-only DB access, SQL validation, rate limiting
+
+### **Backend Optimizations**
+- **Parallel execution:** 30-50% latency reduction
+- **Redis caching:** 90% reduction for repeated queries
+- **Schema validation:** Zero-trust SQL safety
+- **Intent routing:** Optimal path selection (SQL vs semantic)
+
+---
+
+## 📖 LangGraph Pipeline Reference
+
+### **Node Responsibilities**
+
+| Node | Input | Action | Output |
+|------|-------|--------|--------|
+| `memory_node` | user_query + history | Resolve pronouns | query_context |
+| `classify_node` | query_context | Detect intent | intent, retrieval_mode |
+| `parallel_prep_node` | query_context | 🔄 Run planner + semantic | query_plan, semantic_results |
+| `route_node` | retrieval_mode | Select path | → planner/semantic/hybrid |
+| `planner_node` | query_plan | Decompose intent | execution_plan |
+| `sql_gen_node` | execution_plan | Generate SQL | generated_sql |
+| `execute_node` | generated_sql | Run query | sql_results |
+| `semantic_node` | query_context | Search embeddings | semantic_results |
+| `hybrid_node` | both results | Merge results | combined_results |
+| `answer_node` | results | Format response | final_answer |
 
 ---
 
